@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	ormaip160 "github.com/uthereal/scheme-runtime-go/pkg/orm/aip160"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/where"
@@ -46,6 +47,8 @@ type QueryBuilder[Model any, Mutator any] struct {
 	hydrate func(model *Model, columns []string) []any
 	// dehydrate is the function to extract columns/values from mutator.
 	dehydrate func(mutator *Mutator) ([]string, []any)
+	// onConflict is the conflict resolution configuration for insert queries.
+	onConflict *contract.OnConflictClause
 }
 
 // NewQueryBuilder creates a new QueryBuilder instance.
@@ -70,22 +73,50 @@ func (qb *QueryBuilder[Model, Mutator]) Clone() *QueryBuilder[
 	Model,
 	Mutator,
 ] {
+	var conflictClone *contract.OnConflictClause
+	if qb.onConflict != nil {
+		var conflictsCopy []string
+		if qb.onConflict.ConflictColumns != nil {
+			conflictsCopy = make(
+				[]string,
+				len(qb.onConflict.ConflictColumns),
+			)
+			copy(conflictsCopy, qb.onConflict.ConflictColumns)
+		}
+
+		var updatesCopy []string
+		if qb.onConflict.UpdateColumns != nil {
+			updatesCopy = make(
+				[]string,
+				len(qb.onConflict.UpdateColumns),
+			)
+			copy(updatesCopy, qb.onConflict.UpdateColumns)
+		}
+
+		conflictClone = &contract.OnConflictClause{
+			Action:          qb.onConflict.Action,
+			ConflictColumns: conflictsCopy,
+			UpdateColumns:   updatesCopy,
+		}
+	}
+
 	return &QueryBuilder[Model, Mutator]{
-		db:        qb.db,
-		compiler:  qb.compiler,
-		schema:    qb.schema,
-		wheres:    append([]contract.Where(nil), qb.wheres...),
-		orders:    append([]contract.Order(nil), qb.orders...),
-		relations: append([]contract.Relation[Model](nil), qb.relations...),
-		limit:     qb.limit,
-		offset:    qb.offset,
-		distinct:  qb.distinct,
-		groups:    append([]string(nil), qb.groups...),
-		havings:   append([]contract.Where(nil), qb.havings...),
-		aggregate: qb.aggregate,
-		columns:   append([]string(nil), qb.columns...),
-		hydrate:   qb.hydrate,
-		dehydrate: qb.dehydrate,
+		db:         qb.db,
+		compiler:   qb.compiler,
+		schema:     qb.schema,
+		wheres:     append([]contract.Where(nil), qb.wheres...),
+		orders:     append([]contract.Order(nil), qb.orders...),
+		relations:  append([]contract.Relation[Model](nil), qb.relations...),
+		limit:      qb.limit,
+		offset:     qb.offset,
+		distinct:   qb.distinct,
+		groups:     append([]string(nil), qb.groups...),
+		havings:    append([]contract.Where(nil), qb.havings...),
+		aggregate:  qb.aggregate,
+		columns:    append([]string(nil), qb.columns...),
+		hydrate:    qb.hydrate,
+		dehydrate:  qb.dehydrate,
+		onConflict: conflictClone,
 	}
 }
 
@@ -199,6 +230,60 @@ func (qb *QueryBuilder[Model, Mutator]) GetOffset() (
 		return 0, false
 	}
 	return *qb.offset, true
+}
+
+// GetOnConflict returns the conflict resolution clause if configured.
+func (qb *QueryBuilder[Model, Mutator]) GetOnConflict(
+) *contract.OnConflictClause {
+	return qb.onConflict
+}
+
+// OnConflictUpdate configures the query to perform DO UPDATE SET on conflict.
+// Populated column names from updateMutator are used to construct assignments
+// where values are set from EXCLUDED.<column>, excluding conflict targets.
+func (qb *QueryBuilder[Model, Mutator]) OnConflictUpdate(
+	conflictColumn contract.Column[Model],
+	updateMutator Mutator,
+	extraConflictColumns ...contract.Column[Model],
+) *QueryBuilder[Model, Mutator] {
+	conflicts := make([]string, 1+len(extraConflictColumns))
+	conflicts[0] = conflictColumn.ColumnName()
+	for i, col := range extraConflictColumns {
+		conflicts[i+1] = col.ColumnName()
+	}
+	mapColumnToIsConflict := make(map[string]bool, len(conflicts))
+	for _, col := range conflicts {
+		mapColumnToIsConflict[col] = true
+	}
+	rawUpdateCols, _ := qb.dehydrate(&updateMutator)
+	updateCols := make([]string, 0, len(rawUpdateCols))
+	for _, col := range rawUpdateCols {
+		if mapColumnToIsConflict[col] {
+			continue
+		}
+		updateCols = append(updateCols, col)
+	}
+	qb.onConflict = &contract.OnConflictClause{
+		Action:          contract.OnConflictDoUpdate,
+		ConflictColumns: conflicts,
+		UpdateColumns:   updateCols,
+	}
+	return qb
+}
+
+// OnConflictDoNothing configures the query to perform DO NOTHING on conflict.
+func (qb *QueryBuilder[Model, Mutator]) OnConflictDoNothing(
+	conflictColumns ...contract.Column[Model],
+) *QueryBuilder[Model, Mutator] {
+	conflicts := make([]string, len(conflictColumns))
+	for i, col := range conflictColumns {
+		conflicts[i] = col.ColumnName()
+	}
+	qb.onConflict = &contract.OnConflictClause{
+		Action:          contract.OnConflictDoNothing,
+		ConflictColumns: conflicts,
+	}
+	return qb
 }
 
 // Limit sets the maximum number of records to return.
@@ -549,19 +634,17 @@ func (qb *QueryBuilder[Model, Mutator]) Get(
 // First executes the query and returns the first matching record.
 func (qb *QueryBuilder[Model, Mutator]) First(
 	ctx context.Context,
-) (Model, error) {
+) (*Model, error) {
 	cloned := qb.Clone()
 	cloned.Limit(1)
 	results, err := cloned.Get(ctx)
 	if err != nil {
-		var zero Model
-		return zero, err
+		return nil, err
 	}
 	if len(results) == 0 {
-		var zero Model
-		return zero, errors.New("no matching record found")
+		return nil, pgx.ErrNoRows
 	}
-	return results[0], nil
+	return &results[0], nil
 }
 
 // Count executes the query and returns the count of matching records.
@@ -626,51 +709,80 @@ func (qb *QueryBuilder[Model, Mutator]) InsertMany(
 	return nil
 }
 
-// Upsert inserts or updates a single mutator record.
-func (qb *QueryBuilder[Model, Mutator]) Upsert(
+// beginTx initiates a database transaction using the underlying DB.
+func (qb *QueryBuilder[Model, Mutator]) beginTx(
 	ctx context.Context,
-	mutator Mutator,
-	conflictColumns ...string,
-) error {
-	return qb.UpsertMany(ctx, []Mutator{mutator}, conflictColumns...)
+) (pgx.Tx, error) {
+	return qb.db.Begin(ctx)
 }
 
-// UpsertMany inserts or updates multiple mutator records.
-func (qb *QueryBuilder[Model, Mutator]) UpsertMany(
+// Update updates a single record matching query conditions within a
+// transaction. If more than 1 row is affected, the transaction rolls back
+// and an error is returned. If 0 rows match, pgx.ErrNoRows is returned.
+func (qb *QueryBuilder[Model, Mutator]) Update(
 	ctx context.Context,
-	mutators []Mutator,
-	conflictColumns ...string,
+	mutator Mutator,
 ) error {
-	values := make([][]contract.ColumnValue, len(mutators))
-	for i := range mutators {
-		values[i] = qb.mutatorToColumnValues(&mutators[i])
+	values := qb.mutatorToColumnValues(&mutator)
+	if len(values) == 0 {
+		return errors.New("update mutator has no fields set")
 	}
-	sql, bindings := qb.compiler.CompileUpsert(
-		qb,
-		values,
-		conflictColumns,
-	)
-	_, err := qb.db.Exec(ctx, sql, bindings...)
+	tx, err := qb.beginTx(ctx)
 	if err != nil {
 		return fmt.Errorf(
-			"failed executing bulk upsert -> %w",
+			"failed to begin update transaction -> %w",
+			err,
+		)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	txQb := qb.Clone()
+	txQb.SetDB(tx)
+	sql, bindings := txQb.compiler.CompileUpdate(txQb, values)
+	tag, err := tx.Exec(ctx, sql, bindings...)
+	if err != nil {
+		return fmt.Errorf(
+			"failed executing update -> %w",
+			err,
+		)
+	}
+	rowsAffected := tag.RowsAffected()
+	if rowsAffected == 0 {
+		return pgx.ErrNoRows
+	}
+	if rowsAffected > 1 {
+		return fmt.Errorf(
+			"update affected %d rows -> expected at most 1 -> %w",
+			rowsAffected,
+			contract.ErrMultipleRowsAffected,
+		)
+	}
+	err = tx.Commit(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"failed committing update transaction -> %w",
 			err,
 		)
 	}
 	return nil
 }
 
-// Update updates records matching the query conditions.
-func (qb *QueryBuilder[Model, Mutator]) Update(
+// UpdateMany updates records matching the query conditions without returning.
+func (qb *QueryBuilder[Model, Mutator]) UpdateMany(
 	ctx context.Context,
 	mutator Mutator,
 ) error {
 	values := qb.mutatorToColumnValues(&mutator)
+	if len(values) == 0 {
+		return errors.New("update mutator has no fields set")
+	}
 	sql, bindings := qb.compiler.CompileUpdate(qb, values)
 	_, err := qb.db.Exec(ctx, sql, bindings...)
 	if err != nil {
 		return fmt.Errorf(
-			"failed executing update -> %w",
+			"failed executing bulk update -> %w",
 			err,
 		)
 	}
@@ -696,26 +808,22 @@ func (qb *QueryBuilder[Model, Mutator]) Delete(
 func (qb *QueryBuilder[Model, Mutator]) InsertReturning(
 	ctx context.Context,
 	mutator Mutator,
-) (Model, error) {
-	results, err := qb.InsertReturningMany(ctx, []Mutator{mutator})
+) (*Model, error) {
+	results, err := qb.InsertManyReturning(ctx, []Mutator{mutator})
 	if err != nil {
-		var zero Model
-		return zero, err
+		return nil, err
 	}
 	if len(results) == 0 {
-		var zero Model
-		return zero, errors.New(
-			"insert returning failed -> no record returned",
-		)
+		return nil, pgx.ErrNoRows
 	}
 	return results[0], nil
 }
 
-// InsertReturningMany inserts multiple records and returns hydrated models.
-func (qb *QueryBuilder[Model, Mutator]) InsertReturningMany(
+// InsertManyReturning inserts multiple records and returns hydrated models.
+func (qb *QueryBuilder[Model, Mutator]) InsertManyReturning(
 	ctxQuery context.Context,
 	mutators []Mutator,
-) ([]Model, error) {
+) ([]*Model, error) {
 	values := make([][]contract.ColumnValue, len(mutators))
 	for i := range mutators {
 		values[i] = qb.mutatorToColumnValues(&mutators[i])
@@ -735,7 +843,7 @@ func (qb *QueryBuilder[Model, Mutator]) InsertReturningMany(
 	}
 	defer rows.Close()
 
-	results := make([]Model, 0, len(mutators))
+	results := make([]*Model, 0, len(mutators))
 	for rows.Next() {
 		var m Model
 		pointers := qb.hydrate(&m, cols)
@@ -743,7 +851,7 @@ func (qb *QueryBuilder[Model, Mutator]) InsertReturningMany(
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, m)
+		results = append(results, &m)
 	}
 	err = rows.Err()
 	if err != nil {
@@ -752,79 +860,64 @@ func (qb *QueryBuilder[Model, Mutator]) InsertReturningMany(
 	return results, nil
 }
 
-// UpsertReturning upserts a single record and returns the hydrated model.
-func (qb *QueryBuilder[Model, Mutator]) UpsertReturning(
+// UpdateReturning updates a single record and returns the hydrated model
+// within a transaction. If more than 1 row is modified, the transaction
+// rolls back and an error is returned. If 0 rows match, pgx.ErrNoRows is
+// returned.
+func (qb *QueryBuilder[Model, Mutator]) UpdateReturning(
 	ctx context.Context,
 	mutator Mutator,
-	conflictColumns ...string,
-) (Model, error) {
-	results, err := qb.UpsertReturningMany(
-		ctx,
-		[]Mutator{mutator},
-		conflictColumns...,
-	)
+) (*Model, error) {
+	values := qb.mutatorToColumnValues(&mutator)
+	if len(values) == 0 {
+		return nil, errors.New("update mutator has no fields set")
+	}
+	tx, err := qb.beginTx(ctx)
 	if err != nil {
-		var zero Model
-		return zero, err
+		return nil, fmt.Errorf(
+			"failed to begin update transaction -> %w",
+			err,
+		)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	txQb := qb.Clone()
+	txQb.SetDB(tx)
+	results, err := txQb.UpdateManyReturning(ctx, mutator)
+	if err != nil {
+		return nil, err
 	}
 	if len(results) == 0 {
-		var zero Model
-		return zero, errors.New(
-			"upsert returning failed -> no record returned",
+		return nil, pgx.ErrNoRows
+	}
+	if len(results) > 1 {
+		return nil, fmt.Errorf(
+			"update affected %d rows -> expected at most 1 -> %w",
+			len(results),
+			contract.ErrMultipleRowsAffected,
+		)
+	}
+	err = tx.Commit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed committing update transaction -> %w",
+			err,
 		)
 	}
 	return results[0], nil
 }
 
-// UpsertReturningMany upserts multiple records and returns hydrated models.
-func (qb *QueryBuilder[Model, Mutator]) UpsertReturningMany(
-	ctxQuery context.Context,
-	mutators []Mutator,
-	conflictColumns ...string,
-) ([]Model, error) {
-	values := make([][]contract.ColumnValue, len(mutators))
-	for i := range mutators {
-		values[i] = qb.mutatorToColumnValues(&mutators[i])
-	}
-	cols := qb.GetDefaultColumns()
-	sql, bindings := qb.compiler.CompileUpsert(
-		qb,
-		values,
-		conflictColumns,
-	)
-	sql += " RETURNING " + strings.Join(cols, ", ")
-	rows, err := qb.db.Query(ctxQuery, sql, bindings...)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed executing upsert returning -> %w",
-			err,
-		)
-	}
-	defer rows.Close()
-
-	results := make([]Model, 0, len(mutators))
-	for rows.Next() {
-		var m Model
-		pointers := qb.hydrate(&m, cols)
-		err = rows.Scan(pointers...)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, m)
-	}
-	err = rows.Err()
-	if err != nil {
-		return nil, fmt.Errorf("row iteration error -> %w", err)
-	}
-	return results, nil
-}
-
-// UpdateReturning updates records and returns the hydrated models.
-func (qb *QueryBuilder[Model, Mutator]) UpdateReturning(
+// UpdateManyReturning updates records and returns the hydrated models.
+func (qb *QueryBuilder[Model, Mutator]) UpdateManyReturning(
 	ctxQuery context.Context,
 	mutator Mutator,
-) ([]Model, error) {
+) ([]*Model, error) {
 	values := qb.mutatorToColumnValues(&mutator)
+	if len(values) == 0 {
+		return nil, errors.New("update mutator has no fields set")
+	}
 	cols := qb.GetDefaultColumns()
 	sql, bindings := qb.compiler.CompileUpdateReturning(
 		qb,
@@ -840,7 +933,7 @@ func (qb *QueryBuilder[Model, Mutator]) UpdateReturning(
 	}
 	defer rows.Close()
 
-	var results []Model
+	var results []*Model
 	for rows.Next() {
 		var m Model
 		pointers := qb.hydrate(&m, cols)
@@ -848,7 +941,7 @@ func (qb *QueryBuilder[Model, Mutator]) UpdateReturning(
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, m)
+		results = append(results, &m)
 	}
 	err = rows.Err()
 	if err != nil {
@@ -860,7 +953,7 @@ func (qb *QueryBuilder[Model, Mutator]) UpdateReturning(
 // DeleteReturning deletes records and returns the hydrated models.
 func (qb *QueryBuilder[Model, Mutator]) DeleteReturning(
 	ctxQuery context.Context,
-) ([]Model, error) {
+) ([]*Model, error) {
 	cols := qb.GetDefaultColumns()
 	sql, bindings := qb.compiler.CompileDeleteReturning(
 		qb,
@@ -875,7 +968,7 @@ func (qb *QueryBuilder[Model, Mutator]) DeleteReturning(
 	}
 	defer rows.Close()
 
-	var results []Model
+	var results []*Model
 	for rows.Next() {
 		var m Model
 		pointers := qb.hydrate(&m, cols)
@@ -883,7 +976,7 @@ func (qb *QueryBuilder[Model, Mutator]) DeleteReturning(
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, m)
+		results = append(results, &m)
 	}
 	err = rows.Err()
 	if err != nil {

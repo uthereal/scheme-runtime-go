@@ -73,3 +73,8 @@ func (m mockQueryStateProvider) GetColumnCastAndTypedSlice(
 ) (string, any, bool) {
 	return "::text[]", slice, false
 }
+
+// GetOnConflict returns nil for mock.
+func (m mockQueryStateProvider) GetOnConflict() *contract.OnConflictClause {
+	return nil
+}

@@ -6,7 +6,7 @@ A type-safe, generics-based Go runtime library for the [Scheme](https://github.c
 
 - **Type-Safe Query Builder** — Fluent API powered by Go generics (`QueryBuilder[Model, Mutator]`)
 - **PostgreSQL Compiler** — Generates parameterized SQL with `$N` bind variables and `pgx.Identifier` escaping
-- **Full CRUD** — `Get`, `First`, `Insert`, `Update`, `Delete`, `Upsert` with `RETURNING` variants
+- **Full CRUD** — `Get`, `First`, `Insert`, `Update`, `UpdateMany`, `Delete`, `OnConflictUpdate`, `OnConflictDoNothing` with `RETURNING` variants
 - **Bulk Mutations** — Efficient multi-row operations using PostgreSQL `UNNEST(...)` with typed array casts
 - **AIP-160 Filtering** — Parse Google API filter strings into composable WHERE conditions
 - **AIP-132 Ordering** — Parse `order_by` strings into ORDER BY clauses
@@ -50,7 +50,7 @@ users, err := qb.
 qb, err := qb.WhereAip160(`status = "active" AND age >= 18`, fieldMap)
 
 // Bulk insert with RETURNING
-users, err := qb.InsertReturningMany(ctx, mutators)
+users, err := qb.InsertManyReturning(ctx, mutators)
 
 // Eager loading
 users, err := qb.With(UserRelations.Posts, UserRelations.Profile).Get(ctx)

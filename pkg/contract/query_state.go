@@ -46,4 +46,7 @@ type QueryStateProvider interface {
 		colName string,
 		slice []any,
 	) (cast string, typedSlice any, isArray bool)
+
+	// GetOnConflict returns the conflict resolution clause if configured.
+	GetOnConflict() *OnConflictClause
 }

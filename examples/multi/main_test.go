@@ -79,10 +79,10 @@ func Test_Integration_MultiSchema(t *testing.T) {
 	permQuery := NewPermissionQuery(db)
 	userQuery := NewTenantUserQuery(db)
 
-	var adminRole Role
-	var guestRole Role
-	var readPerm Permission
-	var writePerm Permission
+	var adminRole *Role
+	var guestRole *Role
+	var readPerm *Permission
+	var writePerm *Permission
 
 	t.Run("Insert roles, permissions and tenant users", func(t *testing.T) {
 		r1, err := roleQuery.InsertReturning(ctx, RoleMutator{

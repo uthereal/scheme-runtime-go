@@ -247,14 +247,10 @@ func Test_PostgresGrammar_CompileDeleteReturning(t *testing.T) {
 	assert.Empty(t, bindingsNoReturn)
 }
 
-// Test_PostgresGrammar_CompileUpsert tests the compilation of upsert
-// statements.
-func Test_PostgresGrammar_CompileUpsert(t *testing.T) {
+// Test_PostgresGrammar_CompileInsert_OnConflict tests the compilation of
+// insert statements with ON CONFLICT clauses.
+func Test_PostgresGrammar_CompileInsert_OnConflict(t *testing.T) {
 	g := NewPostgresGrammar()
-	state := mockQueryState{
-		schemaName: "public",
-		tableName:  "users",
-	}
 
 	values := [][]contract.ColumnValue{
 		{
@@ -263,24 +259,91 @@ func Test_PostgresGrammar_CompileUpsert(t *testing.T) {
 		},
 	}
 
-	// 1. Success with updates (DO UPDATE)
-	sql, bindings := g.CompileUpsert(state, values, []string{"id"})
+	// 1. Success with DO UPDATE
+	stateUpdate := mockQueryState{
+		schemaName: "public",
+		tableName:  "users",
+		onConflict: &contract.OnConflictClause{
+			Action:          contract.OnConflictDoUpdate,
+			ConflictColumns: []string{"id"},
+			UpdateColumns:   []string{"email"},
+		},
+	}
+	sql, bindings := g.CompileInsert(stateUpdate, values)
 	expectedSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT ("id") DO UPDATE SET "email" = EXCLUDED."email"`
 	assert.Equal(t, expectedSql, sql)
 	assert.Len(t, bindings, 2)
 
-	// 2. Success with no updates (DO NOTHING)
-	sqlNothing, bindingsNothing := g.CompileUpsert(
-		state,
-		values,
-		[]string{"id", "email"},
-	)
+	// 2. Success with DO NOTHING
+	stateNothing := mockQueryState{
+		schemaName: "public",
+		tableName:  "users",
+		onConflict: &contract.OnConflictClause{
+			Action:          contract.OnConflictDoNothing,
+			ConflictColumns: []string{"id", "email"},
+		},
+	}
+	sqlNothing, bindingsNothing := g.CompileInsert(stateNothing, values)
 	expectedNothingSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT ("id", "email") DO NOTHING`
 	assert.Equal(t, expectedNothingSql, sqlNothing)
 	assert.Len(t, bindingsNothing, 2)
 
-	// 3. Empty values upsert
-	sqlEmpty, bindingsEmpty := g.CompileUpsert(state, nil, []string{"id"})
-	assert.Empty(t, sqlEmpty)
-	assert.Nil(t, bindingsEmpty)
+	// 3. Success with targetless DO NOTHING
+	stateTargetless := mockQueryState{
+		schemaName: "public",
+		tableName:  "users",
+		onConflict: &contract.OnConflictClause{
+			Action: contract.OnConflictDoNothing,
+		},
+	}
+	sqlTargetless, bindingsTargetless := g.CompileInsert(
+		stateTargetless,
+		values,
+	)
+	expectedTargetlessSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT DO NOTHING`
+	assert.Equal(t, expectedTargetlessSql, sqlTargetless)
+	assert.Len(t, bindingsTargetless, 2)
+
+	// 4. Success with DO UPDATE empty UpdateColumns fallback to DO NOTHING
+	stateEmptyUpdates := mockQueryState{
+		schemaName: "public",
+		tableName:  "users",
+		onConflict: &contract.OnConflictClause{
+			Action:          contract.OnConflictDoUpdate,
+			ConflictColumns: []string{"id"},
+			UpdateColumns:   []string{},
+		},
+	}
+	sqlEmptyUpdates, _ := g.CompileInsert(
+		stateEmptyUpdates,
+		values,
+	)
+	expectedEmptyUpdatesSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT ("id") DO NOTHING`
+	assert.Equal(t, expectedEmptyUpdatesSql, sqlEmptyUpdates)
+
+	// 5. Success with DO UPDATE empty ConflictColumns fallback to DO NOTHING
+	stateEmptyConflicts := mockQueryState{
+		schemaName: "public",
+		tableName:  "users",
+		onConflict: &contract.OnConflictClause{
+			Action:        contract.OnConflictDoUpdate,
+			UpdateColumns: []string{"email"},
+		},
+	}
+	sqlEmptyConflicts, _ := g.CompileInsert(
+		stateEmptyConflicts,
+		values,
+	)
+	expectedEmptyConflictsSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT DO NOTHING`
+	assert.Equal(t, expectedEmptyConflictsSql, sqlEmptyConflicts)
+
+	// 6. Success with DO UPDATE and RETURNING
+	sqlRet, bindingsRet := g.CompileInsertReturning(
+		stateUpdate,
+		values,
+		[]string{"id", "email"},
+	)
+	expectedRetSql := `INSERT INTO "public"."users" ("id", "email") SELECT unnested.unnested_column_1, unnested.unnested_column_2 FROM UNNEST($1::bigint[], $2::text[]) AS unnested(unnested_column_1, unnested_column_2) ON CONFLICT ("id") DO UPDATE SET "email" = EXCLUDED."email" RETURNING "id", "email"`
+	assert.Equal(t, expectedRetSql, sqlRet)
+	assert.Len(t, bindingsRet, 2)
 }

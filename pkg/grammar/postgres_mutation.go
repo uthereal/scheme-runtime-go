@@ -94,6 +94,15 @@ func (g *PostgresGrammar) CompileInsert(
 		strings.Join(placeholders, ", "),
 		strings.Join(aliasCols, ", "),
 	)
+
+	conflict := state.GetOnConflict()
+	if conflict != nil && conflict.Action != contract.OnConflictNone {
+		conflictSql := g.compileOnConflict(conflict)
+		if conflictSql != "" {
+			sql = fmt.Sprintf("%s %s", sql, conflictSql)
+		}
+	}
+
 	return sql, tracker.values
 }
 
@@ -145,7 +154,11 @@ func (g *PostgresGrammar) CompileUpdate(
 		)
 	}
 
-	sql := fmt.Sprintf("UPDATE %s SET %s", table, strings.Join(assignments, ", "))
+	sql := fmt.Sprintf(
+		"UPDATE %s SET %s",
+		table,
+		strings.Join(assignments, ", "),
+	)
 
 	var wheresSql string
 	wheresSql, tracker = g.compileWheresRaw(
@@ -220,61 +233,47 @@ func (g *PostgresGrammar) CompileDeleteReturning(
 	return sql, bindings
 }
 
-// CompileUpsert compiles an INSERT statement with conflict-triggered ON
-// CONFLICT update logic.
-func (g *PostgresGrammar) CompileUpsert(
-	state contract.QueryStateProvider,
-	values [][]contract.ColumnValue,
-	conflictColumns []string,
-) (string, []any) {
-	sql, bindings := g.CompileInsert(state, values)
-	if sql == "" {
-		return "", nil
+// compileOnConflict formats an ON CONFLICT clause for insert statements.
+func (g *PostgresGrammar) compileOnConflict(
+	clause *contract.OnConflictClause,
+) string {
+	if clause.Action == contract.OnConflictNone {
+		return ""
 	}
 
-	wrappedConflicts := make([]string, len(conflictColumns))
-	mapConflictColumnToIsConflict := make(map[string]bool)
-	for i, col := range conflictColumns {
+	wrappedConflicts := make([]string, len(clause.ConflictColumns))
+	for i, col := range clause.ConflictColumns {
 		wrappedConflicts[i] = sanitizeColumn(col)
-		mapConflictColumnToIsConflict[col] = true
 	}
+	conflictTarget := strings.Join(wrappedConflicts, ", ")
 
-	var rawColumns []string
-	mapColumnToIsIncluded := make(map[string]bool)
-	for _, row := range values {
-		for _, colVal := range row {
-			_, hasCol := mapColumnToIsIncluded[colVal.Column]
-			if !hasCol {
-				mapColumnToIsIncluded[colVal.Column] = true
-				rawColumns = append(rawColumns, colVal.Column)
+	switch clause.Action {
+	case contract.OnConflictDoNothing:
+		if len(wrappedConflicts) > 0 {
+			return fmt.Sprintf("ON CONFLICT (%s) DO NOTHING", conflictTarget)
+		}
+		return "ON CONFLICT DO NOTHING"
+	case contract.OnConflictDoUpdate:
+		if len(wrappedConflicts) == 0 || len(clause.UpdateColumns) == 0 {
+			if len(wrappedConflicts) > 0 {
+				return fmt.Sprintf(
+					"ON CONFLICT (%s) DO NOTHING",
+					conflictTarget,
+				)
 			}
+			return "ON CONFLICT DO NOTHING"
 		}
-	}
-
-	var updates []string
-	for _, col := range rawColumns {
-		_, isConflict := mapConflictColumnToIsConflict[col]
-		if !isConflict {
-			wrappedCol := sanitizeColumn(col)
-			updates = append(
-				updates,
-				fmt.Sprintf("%s = EXCLUDED.%s", wrappedCol, wrappedCol),
-			)
+		updates := make([]string, len(clause.UpdateColumns))
+		for i, col := range clause.UpdateColumns {
+			sanitized := sanitizeColumn(col)
+			updates[i] = fmt.Sprintf("%s = EXCLUDED.%s", sanitized, sanitized)
 		}
+		return fmt.Sprintf(
+			"ON CONFLICT (%s) DO UPDATE SET %s",
+			conflictTarget,
+			strings.Join(updates, ", "),
+		)
+	default:
+		return ""
 	}
-
-	upsertSql := fmt.Sprintf(
-		"%s ON CONFLICT (%s) DO ",
-		sql,
-		strings.Join(wrappedConflicts, ", "),
-	)
-
-	if len(updates) > 0 {
-		updatesStr := strings.Join(updates, ", ")
-		upsertSql = fmt.Sprintf("%sUPDATE SET %s", upsertSql, updatesStr)
-	} else {
-		upsertSql = fmt.Sprintf("%sNOTHING", upsertSql)
-	}
-
-	return upsertSql, bindings
 }

@@ -12,35 +12,11 @@ import (
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/where"
 )
 
+// nestedQueryState provides a minimal QueryStateProvider implementation
+// for compiling nested relationship conditions.
 type nestedQueryState struct {
+	// wheres holds the nested WHERE conditions.
 	wheres []contract.Where
-}
-
-func (n nestedQueryState) GetSchemaName() string { return "" }
-func (n nestedQueryState) GetTableName() string  { return "" }
-func (n nestedQueryState) GetDefaultColumns() []string {
-	return nil
-}
-func (n nestedQueryState) GetSelectedColumns() []string {
-	return nil
-}
-func (n nestedQueryState) IsDistinct() bool { return false }
-func (n nestedQueryState) GetAggregate() *contract.AggregateState {
-	return nil
-}
-func (n nestedQueryState) GetWheres() []contract.Where { return n.wheres }
-func (n nestedQueryState) GetOrders() []contract.Order { return nil }
-func (n nestedQueryState) GetGroups() []string         { return nil }
-func (n nestedQueryState) GetHavings() []contract.Where {
-	return nil
-}
-func (n nestedQueryState) GetLimit() (uint64, bool)  { return 0, false }
-func (n nestedQueryState) GetOffset() (uint64, bool) { return 0, false }
-func (n nestedQueryState) GetColumnCastAndTypedSlice(
-	_ string,
-	slice []any,
-) (string, any, bool) {
-	return "", slice, false
 }
 
 // Relation is the base concrete generic type representing any database
@@ -61,6 +37,79 @@ type Relation[
 	Customizers []func(
 		qb *orm.QueryBuilder[ChildModel, ChildModelMutator],
 	) *orm.QueryBuilder[ChildModel, ChildModelMutator]
+}
+
+// GetSchemaName returns the schema name for nested query state.
+func (n nestedQueryState) GetSchemaName() string {
+	return ""
+}
+
+// GetTableName returns the table name for nested query state.
+func (n nestedQueryState) GetTableName() string {
+	return ""
+}
+
+// GetDefaultColumns returns default columns for nested query state.
+func (n nestedQueryState) GetDefaultColumns() []string {
+	return nil
+}
+
+// GetSelectedColumns returns selected columns for nested query state.
+func (n nestedQueryState) GetSelectedColumns() []string {
+	return nil
+}
+
+// IsDistinct returns whether the nested query is distinct.
+func (n nestedQueryState) IsDistinct() bool {
+	return false
+}
+
+// GetAggregate returns aggregate state for nested query state.
+func (n nestedQueryState) GetAggregate() *contract.AggregateState {
+	return nil
+}
+
+// GetWheres returns the nested where conditions.
+func (n nestedQueryState) GetWheres() []contract.Where {
+	return n.wheres
+}
+
+// GetOrders returns order clauses for nested query state.
+func (n nestedQueryState) GetOrders() []contract.Order {
+	return nil
+}
+
+// GetGroups returns group by columns for nested query state.
+func (n nestedQueryState) GetGroups() []string {
+	return nil
+}
+
+// GetHavings returns having conditions for nested query state.
+func (n nestedQueryState) GetHavings() []contract.Where {
+	return nil
+}
+
+// GetLimit returns the limit and whether it is set.
+func (n nestedQueryState) GetLimit() (uint64, bool) {
+	return 0, false
+}
+
+// GetOffset returns the offset and whether it is set.
+func (n nestedQueryState) GetOffset() (uint64, bool) {
+	return 0, false
+}
+
+// GetColumnCastAndTypedSlice returns column cast suffix and typed slice.
+func (n nestedQueryState) GetColumnCastAndTypedSlice(
+	_ string,
+	slice []any,
+) (string, any, bool) {
+	return "", slice, false
+}
+
+// GetOnConflict returns nil for nested relation query state.
+func (n nestedQueryState) GetOnConflict() *contract.OnConflictClause {
+	return nil
 }
 
 // Customise appends a query customizer to the relationship.

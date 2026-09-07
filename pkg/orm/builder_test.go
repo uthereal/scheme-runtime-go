@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -780,9 +782,9 @@ func Test_QueryBuilder_First(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	_, errEmpty := qbEmpty.First(ctx)
-	require.Error(t, errEmpty)
-	assert.Equal(t, "no matching record found", errEmpty.Error())
+	_, err = qbEmpty.First(ctx)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pgx.ErrNoRows))
 
 	// Case 3: DB error
 	dbErr := &mockDb{queryErr: errors.New("db select error")}
@@ -854,12 +856,12 @@ func Test_QueryBuilder_Insert(t *testing.T) {
 	assert.Contains(t, errErr.Error(), "exec fail")
 }
 
-// Test_QueryBuilder_Upsert tests Upsert and UpsertMany.
-func Test_QueryBuilder_Upsert(t *testing.T) {
+// Test_QueryBuilder_OnConflict tests OnConflictUpdate and OnConflictDoNothing.
+func Test_QueryBuilder_OnConflict(t *testing.T) {
 	ctx := context.Background()
 	compiler := grammar.NewPostgresGrammar()
 
-	// Case 1: Upsert Success
+	// Case 1: OnConflictUpdate Success (single and multiple conflict columns)
 	db := &mockDb{}
 	qb := NewQueryBuilder[testModel, testMutator](
 		db,
@@ -872,11 +874,81 @@ func Test_QueryBuilder_Upsert(t *testing.T) {
 	mut := testMutator{
 		ID: &idVal,
 	}
-	err := qb.Upsert(ctx, mut, "id")
+	emailVal := "updated@example.com"
+	mutUpsert := testMutator{
+		Email: &emailVal,
+	}
+
+	qbUpdate := qb.Clone().OnConflictUpdate(
+		testSchema.ID,
+		mutUpsert,
+	)
+	require.Equal(
+		t,
+		[]string{"id"},
+		qbUpdate.GetOnConflict().ConflictColumns,
+	)
+	require.Equal(
+		t,
+		[]string{"email"},
+		qbUpdate.GetOnConflict().UpdateColumns,
+	)
+	err := qbUpdate.Insert(ctx, mut)
 	require.NoError(t, err)
 
-	// Case 2: Upsert Error
-	dbErr := &mockDb{execErr: errors.New("exec upsert fail")}
+	qbMultiUpdate := qb.Clone().OnConflictUpdate(
+		testSchema.ID,
+		mutUpsert,
+		testSchema.Email,
+	)
+	require.Equal(
+		t,
+		[]string{"id", "email"},
+		qbMultiUpdate.GetOnConflict().ConflictColumns,
+	)
+	err = qbMultiUpdate.Insert(ctx, mut)
+	require.NoError(t, err)
+
+	// Case 2: OnConflictDoNothing with single and multiple conflict columns
+	qbDoNothing := qb.Clone().OnConflictDoNothing(
+		testSchema.ID,
+	)
+	require.Equal(
+		t,
+		[]string{"id"},
+		qbDoNothing.GetOnConflict().ConflictColumns,
+	)
+	err = qbDoNothing.Insert(ctx, mut)
+	require.NoError(t, err)
+
+	qbMultiDoNothing := qb.Clone().OnConflictDoNothing(
+		testSchema.ID,
+		testSchema.Email,
+	)
+	require.Equal(
+		t,
+		[]string{"id", "email"},
+		qbMultiDoNothing.GetOnConflict().ConflictColumns,
+	)
+	err = qbMultiDoNothing.Insert(ctx, mut)
+	require.NoError(t, err)
+
+	// Targetless DO NOTHING
+	qbTargetlessDoNothing := qb.Clone().OnConflictDoNothing()
+	require.Empty(
+		t,
+		qbTargetlessDoNothing.GetOnConflict().ConflictColumns,
+	)
+	assert.Equal(
+		t,
+		contract.OnConflictDoNothing,
+		qbTargetlessDoNothing.GetOnConflict().Action,
+	)
+	err = qbTargetlessDoNothing.Insert(ctx, mut)
+	require.NoError(t, err)
+
+	// Case 3: Error during Insert with OnConflict
+	dbErr := &mockDb{execErr: errors.New("exec conflict fail")}
 	qbErr := NewQueryBuilder[testModel, testMutator](
 		dbErr,
 		compiler,
@@ -884,18 +956,23 @@ func Test_QueryBuilder_Upsert(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	errErr := qbErr.Upsert(ctx, mut, "id")
-	require.Error(t, errErr)
-	assert.Contains(t, errErr.Error(), "exec upsert fail")
+	err = qbErr.OnConflictDoNothing(testSchema.ID).Insert(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exec conflict fail")
 }
 
-// Test_QueryBuilder_UpdateAndDelete tests Update and Delete methods.
+// Test_QueryBuilder_UpdateAndDelete tests Update, UpdateMany, and Delete.
 func Test_QueryBuilder_UpdateAndDelete(t *testing.T) {
 	ctx := context.Background()
 	compiler := grammar.NewPostgresGrammar()
 
-	// 1. Update Success
-	db := &mockDb{}
+	// 1. Update Success (exactly 1 row)
+	mTx := &mockTx{}
+	db := &mockDb{
+		execResult: pgconn.NewCommandTag("UPDATE 1"),
+		mockTx:     mTx,
+	}
+	mTx.db = db
 	qb := NewQueryBuilder[testModel, testMutator](
 		db,
 		compiler,
@@ -904,13 +981,48 @@ func Test_QueryBuilder_UpdateAndDelete(t *testing.T) {
 		testMutatorDehydrate,
 	)
 	idVal := int64(20)
+	emailVal := "update@test.com"
 	mut := testMutator{
-		ID: &idVal,
+		ID:    &idVal,
+		Email: &emailVal,
 	}
-	errUpdate := qb.Update(ctx, mut)
-	require.NoError(t, errUpdate)
+	err := qb.Update(ctx, mut)
+	require.NoError(t, err)
+	assert.True(t, mTx.committed)
 
-	// 2. Update Error
+	// 2. Update Zero Rows -> returns pgx.ErrNoRows
+	dbZero := &mockDb{execResult: pgconn.NewCommandTag("UPDATE 0")}
+	qbZero := NewQueryBuilder[testModel, testMutator](
+		dbZero,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbZero.Update(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pgx.ErrNoRows))
+
+	// 3. Update Multiple Rows -> rolls back and returns error
+	mTxMulti := &mockTx{}
+	dbMulti := &mockDb{
+		execResult: pgconn.NewCommandTag("UPDATE 2"),
+		mockTx:     mTxMulti,
+	}
+	mTxMulti.db = dbMulti
+	qbMulti := NewQueryBuilder[testModel, testMutator](
+		dbMulti,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbMulti.Update(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, contract.ErrMultipleRowsAffected))
+	assert.True(t, mTxMulti.rolledBack)
+
+	// 4. Update Execution Error
 	dbErr := &mockDb{execErr: errors.New("update failed")}
 	qbErr := NewQueryBuilder[testModel, testMutator](
 		dbErr,
@@ -919,15 +1031,76 @@ func Test_QueryBuilder_UpdateAndDelete(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	errUpdateErr := qbErr.Update(ctx, mut)
-	require.Error(t, errUpdateErr)
-	assert.Contains(t, errUpdateErr.Error(), "update failed")
+	err = qbErr.Update(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
 
-	// 3. Delete Success
-	errDelete := qb.Delete(ctx)
-	require.NoError(t, errDelete)
+	// 5. Update Begin Error
+	dbBeginErr := &mockDb{err: errors.New("tx begin fail")}
+	qbBeginErr := NewQueryBuilder[testModel, testMutator](
+		dbBeginErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbBeginErr.Update(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to begin update transaction")
 
-	// 4. Delete Error
+	// 6. Update Commit Error
+	mTxCommitErr := &mockTx{err: errors.New("tx commit fail")}
+	dbCommitErr := &mockDb{
+		execResult: pgconn.NewCommandTag("UPDATE 1"),
+		mockTx:     mTxCommitErr,
+	}
+	mTxCommitErr.db = dbCommitErr
+	qbCommitErr := NewQueryBuilder[testModel, testMutator](
+		dbCommitErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbCommitErr.Update(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed committing update transaction")
+
+	// 7. Update Empty Mutator Error (does not begin transaction)
+	dbEmptyMut := &mockDb{err: errors.New("should not begin tx")}
+	qbEmptyMut := NewQueryBuilder[testModel, testMutator](
+		dbEmptyMut,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbEmptyMut.Update(ctx, testMutator{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update mutator has no fields set")
+
+	// 8. UpdateMany Success
+	err = qb.UpdateMany(ctx, mut)
+	require.NoError(t, err)
+
+	// 9. UpdateMany Error
+	dbManyErr := &mockDb{execErr: errors.New("bulk update failed")}
+	qbManyErr := NewQueryBuilder[testModel, testMutator](
+		dbManyErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	err = qbManyErr.UpdateMany(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk update failed")
+
+	// 10. Delete Success
+	err = qb.Delete(ctx)
+	require.NoError(t, err)
+
+	// 11. Delete Error
 	dbErrDel := &mockDb{execErr: errors.New("delete failed")}
 	qbErrDel := NewQueryBuilder[testModel, testMutator](
 		dbErrDel,
@@ -936,9 +1109,9 @@ func Test_QueryBuilder_UpdateAndDelete(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	errDeleteErr := qbErrDel.Delete(ctx)
-	require.Error(t, errDeleteErr)
-	assert.Contains(t, errDeleteErr.Error(), "delete failed")
+	err = qbErrDel.Delete(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete failed")
 }
 
 // Test_QueryBuilder_InsertReturning tests InsertReturning methods.
@@ -981,13 +1154,9 @@ func Test_QueryBuilder_InsertReturning(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	_, errEmpty := qbEmpty.InsertReturning(ctx, mut)
-	require.Error(t, errEmpty)
-	assert.Contains(
-		t,
-		errEmpty.Error(),
-		"insert returning failed -> no record returned",
-	)
+	_, err = qbEmpty.InsertReturning(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pgx.ErrNoRows))
 
 	// Case 3: DB Query error
 	dbErr := &mockDb{queryErr: errors.New("query error")}
@@ -1021,8 +1190,8 @@ func Test_QueryBuilder_InsertReturning(t *testing.T) {
 	require.Error(t, errScan)
 }
 
-// Test_QueryBuilder_UpsertReturning tests UpsertReturning methods.
-func Test_QueryBuilder_UpsertReturning(t *testing.T) {
+// Test_QueryBuilder_OnConflictReturning tests OnConflict with returning.
+func Test_QueryBuilder_OnConflictReturning(t *testing.T) {
 	ctx := context.Background()
 	compiler := grammar.NewPostgresGrammar()
 
@@ -1043,7 +1212,10 @@ func Test_QueryBuilder_UpsertReturning(t *testing.T) {
 	)
 	idVal := int64(10)
 	mut := testMutator{ID: &idVal}
-	res, err := qb.UpsertReturning(ctx, mut, "id")
+	res, err := qb.OnConflictUpdate(
+		testSchema.ID,
+		mut,
+	).InsertReturning(ctx, mut)
 	require.NoError(t, err)
 	assert.Equal(t, int64(10), res.ID)
 	assert.Equal(t, "upsert@test.com", res.Email)
@@ -1061,59 +1233,32 @@ func Test_QueryBuilder_UpsertReturning(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	_, errEmpty := qbEmpty.UpsertReturning(ctx, mut, "id")
-	require.Error(t, errEmpty)
-	assert.Contains(
-		t,
-		errEmpty.Error(),
-		"upsert returning failed -> no record returned",
-	)
-
-	// Case 3: DB Query error
-	dbErr := &mockDb{queryErr: errors.New("upsert query error")}
-	qbErr := NewQueryBuilder[testModel, testMutator](
-		dbErr,
-		compiler,
-		testTable,
-		testModelHydrate,
-		testMutatorDehydrate,
-	)
-	_, errQuery := qbErr.UpsertReturning(ctx, mut, "id")
-	require.Error(t, errQuery)
-	assert.Contains(t, errQuery.Error(), "upsert query error")
-
-	// Case 4: Scan error
-	mRowsScanErr := &mockRows{
-		cols: []string{"id", "email"},
-		records: [][]any{
-			{"not-an-int", "test@test.com"},
-		},
-	}
-	dbScanErr := &mockDb{queryRows: mRowsScanErr}
-	qbScanErr := NewQueryBuilder[testModel, testMutator](
-		dbScanErr,
-		compiler,
-		testTable,
-		testModelHydrate,
-		testMutatorDehydrate,
-	)
-	_, errScan := qbScanErr.UpsertReturning(ctx, mut, "id")
-	require.Error(t, errScan)
+	_, err = qbEmpty.OnConflictDoNothing(
+		testSchema.ID,
+	).InsertReturning(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pgx.ErrNoRows))
 }
 
-// Test_QueryBuilder_UpdateReturning tests UpdateReturning method.
+// Test_QueryBuilder_UpdateReturning tests UpdateReturning and
+// UpdateManyReturning.
 func Test_QueryBuilder_UpdateReturning(t *testing.T) {
 	ctx := context.Background()
 	compiler := grammar.NewPostgresGrammar()
 
-	// Case 1: Success
+	// Case 1: Success (exactly 1 row returned)
+	mTx := &mockTx{}
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
 			{int64(10), "update@test.com"},
 		},
 	}
-	db := &mockDb{queryRows: mRows}
+	db := &mockDb{
+		queryRows: mRows,
+		mockTx:    mTx,
+	}
+	mTx.db = db
 	qb := NewQueryBuilder[testModel, testMutator](
 		db,
 		compiler,
@@ -1125,11 +1270,111 @@ func Test_QueryBuilder_UpdateReturning(t *testing.T) {
 	mut := testMutator{ID: &idVal}
 	res, err := qb.UpdateReturning(ctx, mut)
 	require.NoError(t, err)
-	require.Len(t, res, 1)
-	assert.Equal(t, int64(10), res[0].ID)
-	assert.Equal(t, "update@test.com", res[0].Email)
+	assert.Equal(t, int64(10), res.ID)
+	assert.Equal(t, "update@test.com", res.Email)
+	assert.True(t, mTx.committed)
 
-	// Case 2: DB Query error
+	// Case 2: Zero rows -> pgx.ErrNoRows
+	mRowsEmpty := &mockRows{
+		cols:    []string{"id", "email"},
+		records: [][]any{},
+	}
+	dbEmpty := &mockDb{queryRows: mRowsEmpty}
+	qbEmpty := NewQueryBuilder[testModel, testMutator](
+		dbEmpty,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbEmpty.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pgx.ErrNoRows))
+
+	// Case 3: Multiple rows -> rolls back and returns error
+	mTxMulti := &mockTx{}
+	mRowsMulti := &mockRows{
+		cols: []string{"id", "email"},
+		records: [][]any{
+			{int64(10), "u1@test.com"},
+			{int64(11), "u2@test.com"},
+		},
+	}
+	dbMulti := &mockDb{
+		queryRows: mRowsMulti,
+		mockTx:    mTxMulti,
+	}
+	mTxMulti.db = dbMulti
+	qbMulti := NewQueryBuilder[testModel, testMutator](
+		dbMulti,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbMulti.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, contract.ErrMultipleRowsAffected))
+	assert.True(t, mTxMulti.rolledBack)
+
+	// Case 4: Begin error
+	dbBeginErr := &mockDb{err: errors.New("begin fail")}
+	qbBeginErr := NewQueryBuilder[testModel, testMutator](
+		dbBeginErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbBeginErr.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to begin update transaction")
+
+	// Case 5: Commit error
+	mRowsCommit := &mockRows{
+		cols: []string{"id", "email"},
+		records: [][]any{
+			{int64(10), "update@test.com"},
+		},
+	}
+	mTxCommitErr := &mockTx{err: errors.New("commit fail")}
+	dbCommitErr := &mockDb{
+		queryRows: mRowsCommit,
+		mockTx:    mTxCommitErr,
+	}
+	mTxCommitErr.db = dbCommitErr
+	qbCommitErr := NewQueryBuilder[testModel, testMutator](
+		dbCommitErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbCommitErr.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed committing update transaction")
+
+	// Case 6: UpdateManyReturning Success
+	mRowsMany := &mockRows{
+		cols: []string{"id", "email"},
+		records: [][]any{
+			{int64(10), "update@test.com"},
+		},
+	}
+	dbMany := &mockDb{queryRows: mRowsMany}
+	qbMany := NewQueryBuilder[testModel, testMutator](
+		dbMany,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	resMany, errMany := qbMany.UpdateManyReturning(ctx, mut)
+	require.NoError(t, errMany)
+	require.Len(t, resMany, 1)
+	assert.Equal(t, int64(10), resMany[0].ID)
+
+	// Case 7: DB Query error
 	dbErr := &mockDb{queryErr: errors.New("update query error")}
 	qbErr := NewQueryBuilder[testModel, testMutator](
 		dbErr,
@@ -1138,11 +1383,11 @@ func Test_QueryBuilder_UpdateReturning(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	_, errQuery := qbErr.UpdateReturning(ctx, mut)
-	require.Error(t, errQuery)
-	assert.Contains(t, errQuery.Error(), "update query error")
+	_, err = qbErr.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update query error")
 
-	// Case 3: Scan error
+	// Case 8: Scan error
 	mRowsScanErr := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
@@ -1157,8 +1402,87 @@ func Test_QueryBuilder_UpdateReturning(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	_, errScan := qbScanErr.UpdateReturning(ctx, mut)
-	require.Error(t, errScan)
+	_, err = qbScanErr.UpdateReturning(ctx, mut)
+	require.Error(t, err)
+
+	// Case 9: UpdateManyReturning Query error
+	_, err = qbErr.UpdateManyReturning(ctx, mut)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update query error")
+
+	// Case 10: UpdateManyReturning Scan error
+	mRowsManyScanErr := &mockRows{
+		cols: []string{"id", "email"},
+		records: [][]any{
+			{"not-an-int", "test@test.com"},
+		},
+	}
+	dbManyScanErr := &mockDb{queryRows: mRowsManyScanErr}
+	qbManyScanErr := NewQueryBuilder[testModel, testMutator](
+		dbManyScanErr,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbManyScanErr.UpdateManyReturning(ctx, mut)
+	require.Error(t, err)
+
+	// Case 11: UpdateReturning Empty Mutator Error (does not begin transaction)
+	dbEmptyMutRet := &mockDb{err: errors.New("should not begin tx")}
+	qbEmptyMut := NewQueryBuilder[testModel, testMutator](
+		dbEmptyMutRet,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	_, err = qbEmptyMut.UpdateReturning(ctx, testMutator{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update mutator has no fields set")
+
+	// Case 12: UpdateManyReturning Empty Mutator Error
+	_, err = qbEmptyMut.UpdateManyReturning(ctx, testMutator{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update mutator has no fields set")
+}
+
+// Test_QueryBuilder_Clone_OnConflict tests that Clone performs a deep copy
+// of the onConflict metadata.
+func Test_QueryBuilder_Clone_OnConflict(t *testing.T) {
+	db := &mockDb{}
+	compiler := grammar.NewPostgresGrammar()
+	qb := NewQueryBuilder[testModel, testMutator](
+		db,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	emailVal := "email@test.com"
+	qb.OnConflictUpdate(testSchema.ID, testMutator{Email: &emailVal})
+	cloned := qb.Clone()
+
+	require.NotNil(t, cloned.GetOnConflict())
+	assert.Equal(t, qb.GetOnConflict().Action, cloned.GetOnConflict().Action)
+	assert.Equal(
+		t,
+		qb.GetOnConflict().ConflictColumns,
+		cloned.GetOnConflict().ConflictColumns,
+	)
+
+	// Mutate clone and assert original is unaffected
+	cloned.OnConflictDoNothing(testSchema.Email)
+	assert.Equal(
+		t,
+		contract.OnConflictDoUpdate,
+		qb.GetOnConflict().Action,
+	)
+	assert.Equal(
+		t,
+		contract.OnConflictDoNothing,
+		cloned.GetOnConflict().Action,
+	)
 }
 
 // Test_QueryBuilder_DeleteReturning tests DeleteReturning method.
@@ -1390,8 +1714,8 @@ func Test_QueryBuilder_Get_RowIterationError(t *testing.T) {
 	assert.Contains(t, err.Error(), "iteration failed")
 }
 
-// Test_QueryBuilder_InsertReturningMany_RowIterationError tests row error.
-func Test_QueryBuilder_InsertReturningMany_RowIterationError(
+// Test_QueryBuilder_InsertManyReturning_RowIterationError tests row error.
+func Test_QueryBuilder_InsertManyReturning_RowIterationError(
 	t *testing.T,
 ) {
 	ctx := context.Background()
@@ -1413,13 +1737,13 @@ func Test_QueryBuilder_InsertReturningMany_RowIterationError(
 		testMutatorDehydrate,
 	)
 	muts := []testMutator{{}}
-	_, err := qb.InsertReturningMany(ctx, muts)
+	_, err := qb.InsertManyReturning(ctx, muts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "insert iter failed")
 }
 
-// Test_QueryBuilder_UpsertReturningMany_RowIterationError tests row error.
-func Test_QueryBuilder_UpsertReturningMany_RowIterationError(
+// Test_QueryBuilder_UpdateManyReturning_RowIterationError tests row error.
+func Test_QueryBuilder_UpdateManyReturning_RowIterationError(
 	t *testing.T,
 ) {
 	ctx := context.Background()
@@ -1430,7 +1754,7 @@ func Test_QueryBuilder_UpsertReturningMany_RowIterationError(
 		records: [][]any{
 			{int64(1), "alice@google.com"},
 		},
-		rowsErr: errors.New("upsert iter failed"),
+		rowsErr: errors.New("update iter failed"),
 	}
 	db := &mockDb{queryRows: mRows}
 	qb := NewQueryBuilder[testModel, testMutator](
@@ -1440,10 +1764,11 @@ func Test_QueryBuilder_UpsertReturningMany_RowIterationError(
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	muts := []testMutator{{}}
-	_, err := qb.UpsertReturningMany(ctx, muts, "id")
+	emailVal := "test@test.com"
+	mut := testMutator{Email: &emailVal}
+	_, err := qb.UpdateManyReturning(ctx, mut)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "upsert iter failed")
+	assert.Contains(t, err.Error(), "update iter failed")
 }
 
 // Test_QueryBuilder_UpdateReturning_RowIterationError tests row error
@@ -1469,7 +1794,8 @@ func Test_QueryBuilder_UpdateReturning_RowIterationError(
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	mut := testMutator{}
+	emailVal := "test@test.com"
+	mut := testMutator{Email: &emailVal}
 	_, err := qb.UpdateReturning(ctx, mut)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update iter failed")

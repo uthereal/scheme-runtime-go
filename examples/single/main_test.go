@@ -2,12 +2,14 @@ package single
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,10 +148,10 @@ func Test_Integration_Mutations(t *testing.T) {
 		assert.Equal(t, metaVal, u.Metadata)
 		assert.True(t, u.CreatedAt.Equal(createdVal))
 
-		user = u
+		user = *u
 	})
 
-	t.Run("InsertMany and InsertReturningMany", func(t *testing.T) {
+	t.Run("InsertMany and InsertManyReturning", func(t *testing.T) {
 		email2 := "bob@example.com"
 		email3 := "charlie@example.com"
 		muts := []UserMutator{
@@ -161,7 +163,7 @@ func Test_Integration_Mutations(t *testing.T) {
 			},
 		}
 
-		users, err := qb.InsertReturningMany(ctx, muts)
+		users, err := qb.InsertManyReturning(ctx, muts)
 		require.NoError(t, err)
 		require.Len(t, users, 2)
 		assert.Equal(t, email2, users[0].Email)
@@ -173,32 +175,131 @@ func Test_Integration_Mutations(t *testing.T) {
 		userMut := UserMutator{
 			Email: contract.Set[string]{IsSet: true, Value: newEmail},
 		}
-		updatedUsers, err := qb.Where(Schema.Public.User.ID.Eq(user.ID)).
+		updatedUser, err := NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
 			UpdateReturning(ctx, userMut)
 		require.NoError(t, err)
-		require.Len(t, updatedUsers, 1)
-		assert.Equal(t, newEmail, updatedUsers[0].Email)
+		assert.Equal(t, newEmail, updatedUser.Email)
+
+		// Non-returning Update
+		directEmail := "alice_direct@example.com"
+		err = NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
+			Update(ctx, UserMutator{
+				Email: contract.Set[string]{IsSet: true, Value: directEmail},
+			})
+		require.NoError(t, err)
+
+		// Zero rows returns pgx.ErrNoRows
+		err = NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(999999)).
+			Update(ctx, UserMutator{
+				Email: contract.Set[string]{
+					IsSet: true,
+					Value: "none@example.com",
+				},
+			})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, pgx.ErrNoRows))
+
+		// Multiple rows rolls back and returns ErrMultipleRowsAffected
+		err = NewUserQuery(db).Update(ctx, UserMutator{
+			Email: contract.Set[string]{
+				IsSet: true,
+				Value: "all@example.com",
+			},
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, contract.ErrMultipleRowsAffected))
+
+		// Verify database rolled back: no records with all@example.com
+		countAll, err := NewUserQuery(db).
+			Where(Schema.Public.User.Email.Eq("all@example.com")).
+			Count(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), countAll)
+
+		// Multiple rows with UpdateReturning also rolls back
+		_, err = NewUserQuery(db).UpdateReturning(ctx, UserMutator{
+			Email: contract.Set[string]{
+				IsSet: true,
+				Value: "all_returning@example.com",
+			},
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, contract.ErrMultipleRowsAffected))
+
+		// Verify database was actually rolled back for UpdateReturning
+		countRet, err := NewUserQuery(db).
+			Where(Schema.Public.User.Email.Eq("all_returning@example.com")).
+			Count(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), countRet)
+
+		// UpdateMany updates multiple records without rollback
+		err = NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
+			UpdateMany(ctx, UserMutator{
+				Email: contract.Set[string]{
+					IsSet: true,
+					Value: newEmail,
+				},
+			})
+		require.NoError(t, err)
+
+		// UpdateManyReturning updates and returns hydrated models
+		manyUpdated, err := NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
+			UpdateManyReturning(ctx, UserMutator{
+				Email: contract.Set[string]{IsSet: true, Value: newEmail},
+			})
+		require.NoError(t, err)
+		require.Len(t, manyUpdated, 1)
+		assert.Equal(t, newEmail, manyUpdated[0].Email)
 	})
 
-	t.Run("Upsert and UpsertReturning", func(t *testing.T) {
+	t.Run("OnConflictUpdate and OnConflictDoNothing", func(t *testing.T) {
 		upsertMut := UserMutator{
 			ID:    contract.Set[int64]{IsSet: true, Value: user.ID},
-			Email: contract.Set[string]{IsSet: true, Value: "alice_upsert@example.com"},
+			Email: contract.Set[string]{
+				IsSet: true,
+				Value: "alice_upsert@example.com",
+			},
 		}
-		upsertedUser, err := qb.UpsertReturning(ctx, upsertMut, "id")
+		upsertedUser, err := NewUserQuery(db).OnConflictUpdate(
+			Schema.Public.User.ID,
+			upsertMut,
+		).InsertReturning(ctx, upsertMut)
 		require.NoError(t, err)
 		assert.Equal(t, user.ID, upsertedUser.ID)
 		assert.Equal(t, "alice_upsert@example.com", upsertedUser.Email)
+
+		// OnConflictDoNothing returns ErrNoRows when insert conflicts
+		nothingMut := UserMutator{
+			ID:    contract.Set[int64]{IsSet: true, Value: user.ID},
+			Email: contract.Set[string]{
+				IsSet: true,
+				Value: "alice_donothing@example.com",
+			},
+		}
+		_, err = NewUserQuery(db).OnConflictDoNothing(
+			Schema.Public.User.ID,
+		).InsertReturning(ctx, nothingMut)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, pgx.ErrNoRows))
 	})
 
 	t.Run("Delete and DeleteReturning", func(t *testing.T) {
-		deletedUsers, err := qb.Where(Schema.Public.User.ID.Eq(user.ID)).
+		deletedUsers, err := NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
 			DeleteReturning(ctx)
 		require.NoError(t, err)
 		require.Len(t, deletedUsers, 1)
 		assert.Equal(t, user.ID, deletedUsers[0].ID)
 
-		exists, err := qb.Where(Schema.Public.User.ID.Eq(user.ID)).Exists(ctx)
+		exists, err := NewUserQuery(db).
+			Where(Schema.Public.User.ID.Eq(user.ID)).
+			Exists(ctx)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -223,7 +324,7 @@ func Test_Integration_Queries_And_Filters(t *testing.T) {
 	tags1 := []string{"foo"}
 	tags2 := []string{"bar", "baz"}
 
-	_, err = qb.InsertReturningMany(ctx, []UserMutator{
+	_, err = qb.InsertManyReturning(ctx, []UserMutator{
 		{
 			Email: contract.Set[string]{IsSet: true, Value: "u1@example.com"},
 			Age:   contract.Set[*int]{IsSet: true, Value: &age1},
@@ -311,7 +412,7 @@ func Test_Integration_Queries_And_Filters(t *testing.T) {
 			Where(Schema.Public.User.Email.Eq("notfound")).
 			First(ctx)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no matching record found")
+		assert.True(t, errors.Is(err, pgx.ErrNoRows))
 	})
 
 	t.Run("Array Contains and Overlaps", func(t *testing.T) {
@@ -351,7 +452,7 @@ func Test_Integration_Pagination(t *testing.T) {
 			Email: contract.Set[string]{IsSet: true, Value: email},
 		})
 	}
-	_, err = qb.InsertReturningMany(ctx, muts)
+	_, err = qb.InsertManyReturning(ctx, muts)
 	require.NoError(t, err)
 
 	t.Run("Standard Paginate", func(t *testing.T) {
@@ -390,7 +491,7 @@ func Test_Integration_Aggregates(t *testing.T) {
 	qb := NewUserQuery(db)
 
 	a1, a2, a3 := 20, 30, 40
-	_, err = qb.InsertReturningMany(ctx, []UserMutator{
+	_, err = qb.InsertManyReturning(ctx, []UserMutator{
 		{
 			Email: contract.Set[string]{IsSet: true, Value: "u1@example.com"},
 			Age:   contract.Set[*int]{IsSet: true, Value: &a1},
@@ -431,9 +532,9 @@ func Test_Integration_Relations(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	var user User
-	var post Post
-	var comment Comment
+	var user *User
+	var post *Post
+	var comment *Comment
 
 	// Fetch seeded user 999
 	u, err := NewUserQuery(db).Where(Schema.Public.User.ID.Eq(999)).First(ctx)

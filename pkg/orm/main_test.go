@@ -22,6 +22,19 @@ type mockDb struct {
 	queryErr error
 	// queryRowValue is the mock row returned by QueryRow.
 	queryRowValue *mockRow
+	// err is the error returned by Begin.
+	err error
+	// mockTx is the mock transaction returned by Begin.
+	mockTx *mockTx
+}
+
+// mockTx is a mock transaction implementation for testing.
+type mockTx struct {
+	pgx.Tx
+	db         *mockDb
+	err        error
+	committed  bool
+	rolledBack bool
 }
 
 // mockRow is a mock row for database scanning.
@@ -117,6 +130,77 @@ func (m *mockDb) QueryRow(
 	_ ...any,
 ) pgx.Row {
 	return m.queryRowValue
+}
+
+// Begin starts a mock transaction.
+func (m *mockDb) Begin(
+	_ context.Context,
+) (pgx.Tx, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.mockTx != nil {
+		return m.mockTx, nil
+	}
+	return &mockTx{db: m}, nil
+}
+
+// BeginTx starts a mock transaction with options.
+func (m *mockDb) BeginTx(
+	_ context.Context,
+	_ pgx.TxOptions,
+) (pgx.Tx, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.mockTx != nil {
+		return m.mockTx, nil
+	}
+	return &mockTx{db: m}, nil
+}
+
+// Exec delegates to mockDb.
+func (m *mockTx) Exec(
+	ctx context.Context,
+	sql string,
+	arguments ...any,
+) (pgconn.CommandTag, error) {
+	return m.db.Exec(ctx, sql, arguments...)
+}
+
+// Query delegates to mockDb.
+func (m *mockTx) Query(
+	ctx context.Context,
+	sql string,
+	arguments ...any,
+) (pgx.Rows, error) {
+	return m.db.Query(ctx, sql, arguments...)
+}
+
+// QueryRow delegates to mockDb.
+func (m *mockTx) QueryRow(
+	ctx context.Context,
+	sql string,
+	arguments ...any,
+) pgx.Row {
+	return m.db.QueryRow(ctx, sql, arguments...)
+}
+
+// Begin simulates starting a nested transaction.
+func (m *mockTx) Begin(_ context.Context) (pgx.Tx, error) {
+	return m, nil
+}
+
+// Commit simulates committing a transaction.
+func (m *mockTx) Commit(_ context.Context) error {
+	m.committed = true
+	return m.err
+}
+
+// Rollback simulates rolling back a transaction.
+func (m *mockTx) Rollback(_ context.Context) error {
+	m.rolledBack = true
+	return m.err
 }
 
 // Scan scans mock database columns into destination variables.

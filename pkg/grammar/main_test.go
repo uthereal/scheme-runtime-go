@@ -17,6 +17,7 @@ type mockQueryState struct {
 	havings        []contract.Where
 	limit          *uint64
 	offset         *uint64
+	onConflict     *contract.OnConflictClause
 }
 
 // GetSchemaName returns the schema name of the query state.
@@ -109,4 +110,9 @@ func (m mockQueryState) GetColumnCastAndTypedSlice(
 		res[i] = v.(string)
 	}
 	return "::text[]", res, false
+}
+
+// GetOnConflict returns the conflict resolution clause.
+func (m mockQueryState) GetOnConflict() *contract.OnConflictClause {
+	return m.onConflict
 }

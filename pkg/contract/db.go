@@ -2,6 +2,7 @@ package contract
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -30,4 +31,11 @@ type DB interface {
 		sql string,
 		arguments ...any,
 	) pgx.Row
+
+	// Begin starts a new transaction with default options.
+	Begin(ctxBegin context.Context) (pgx.Tx, error)
 }
+
+// ErrMultipleRowsAffected is returned when a single-row mutation affects
+// multiple rows.
+var ErrMultipleRowsAffected = errors.New("multiple rows affected")

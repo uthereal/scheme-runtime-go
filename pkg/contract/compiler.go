@@ -51,12 +51,4 @@ type SQLCompiler interface {
 		state QueryStateProvider,
 		returning []string,
 	) (sql string, bindings []any)
-
-	// CompileUpsert translates records into an INSERT statement with an ON
-	// CONFLICT clause to handle insert collisions as updates.
-	CompileUpsert(
-		state QueryStateProvider,
-		values [][]ColumnValue,
-		conflictColumns []string,
-	) (sql string, bindings []any)
 }
