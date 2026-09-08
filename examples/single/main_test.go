@@ -149,6 +149,14 @@ func Test_Integration_Mutations(t *testing.T) {
 		assert.True(t, u.CreatedAt.Equal(createdVal))
 
 		user = *u
+
+		// Test non-returning Insert
+		insertedEmail := "inserted@example.com"
+		inserted, err := qb.Insert(ctx, UserMutator{
+			Email: contract.Set[string]{IsSet: true, Value: insertedEmail},
+		})
+		require.NoError(t, err)
+		assert.True(t, inserted)
 	})
 
 	t.Run("InsertMany and InsertManyReturning", func(t *testing.T) {
@@ -168,6 +176,19 @@ func Test_Integration_Mutations(t *testing.T) {
 		require.Len(t, users, 2)
 		assert.Equal(t, email2, users[0].Email)
 		assert.Equal(t, email3, users[1].Email)
+
+		// Test non-returning InsertMany
+		batchMuts := []UserMutator{
+			{Email: contract.Set[string]{IsSet: true, Value: "batch1@example.com"}},
+			{Email: contract.Set[string]{IsSet: true, Value: "batch2@example.com"}},
+		}
+		affected, err := qb.InsertMany(ctx, batchMuts)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), affected)
+
+		affectedEmpty, err := qb.InsertMany(ctx, nil)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), affectedEmpty)
 	})
 
 	t.Run("Update and UpdateReturning", func(t *testing.T) {
@@ -274,7 +295,7 @@ func Test_Integration_Mutations(t *testing.T) {
 		assert.Equal(t, user.ID, upsertedUser.ID)
 		assert.Equal(t, "alice_upsert@example.com", upsertedUser.Email)
 
-		// OnConflictDoNothing returns ErrNoRows when insert conflicts
+		// OnConflictDoNothing returns ErrNoRows when insert conflicts with InsertReturning
 		nothingMut := UserMutator{
 			ID:    contract.Set[int64]{IsSet: true, Value: user.ID},
 			Email: contract.Set[string]{
@@ -287,6 +308,13 @@ func Test_Integration_Mutations(t *testing.T) {
 		).InsertReturning(ctx, nothingMut)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, pgx.ErrNoRows))
+
+		// Non-returning Insert with OnConflictDoNothing returns (false, nil) when conflict occurs
+		insertedNothing, err := NewUserQuery(db).OnConflictDoNothing(
+			Schema.Public.User.ID,
+		).Insert(ctx, nothingMut)
+		require.NoError(t, err)
+		assert.False(t, insertedNothing)
 	})
 
 	t.Run("Delete and DeleteReturning", func(t *testing.T) {

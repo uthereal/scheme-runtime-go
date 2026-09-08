@@ -824,8 +824,8 @@ func Test_QueryBuilder_Insert(t *testing.T) {
 	ctx := context.Background()
 	compiler := grammar.NewPostgresGrammar()
 
-	// Case 1: Insert Success
-	db := &mockDb{}
+	// Case 1: Insert Success (1 row inserted)
+	db := &mockDb{execResult: pgconn.NewCommandTag("INSERT 0 1")}
 	qb := NewQueryBuilder[testModel, testMutator](
 		db,
 		compiler,
@@ -839,10 +839,24 @@ func Test_QueryBuilder_Insert(t *testing.T) {
 		ID:    &idVal,
 		Email: &emailVal,
 	}
-	err := qb.Insert(ctx, mut)
+	inserted, err := qb.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
-	// Case 2: Insert Error
+	// Case 2: Insert Skipped (0 rows inserted, e.g. ON CONFLICT DO NOTHING)
+	dbSkipped := &mockDb{execResult: pgconn.NewCommandTag("INSERT 0 0")}
+	qbSkipped := NewQueryBuilder[testModel, testMutator](
+		dbSkipped,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	inserted, err = qbSkipped.Insert(ctx, mut)
+	require.NoError(t, err)
+	assert.False(t, inserted)
+
+	// Case 3: Insert Error
 	dbErr := &mockDb{execErr: errors.New("exec fail")}
 	qbErr := NewQueryBuilder[testModel, testMutator](
 		dbErr,
@@ -851,9 +865,28 @@ func Test_QueryBuilder_Insert(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	errErr := qbErr.Insert(ctx, mut)
+	inserted, errErr := qbErr.Insert(ctx, mut)
 	require.Error(t, errErr)
+	assert.False(t, inserted)
 	assert.Contains(t, errErr.Error(), "exec fail")
+
+	// Case 4: InsertMany Success
+	dbMany := &mockDb{execResult: pgconn.NewCommandTag("INSERT 0 2")}
+	qbMany := NewQueryBuilder[testModel, testMutator](
+		dbMany,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	)
+	affected, err := qbMany.InsertMany(ctx, []testMutator{mut, mut})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), affected)
+
+	// Case 5: InsertMany Empty
+	affectedEmpty, err := qbMany.InsertMany(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), affectedEmpty)
 }
 
 // Test_QueryBuilder_OnConflict tests OnConflictUpdate and OnConflictDoNothing.
@@ -862,7 +895,7 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 	compiler := grammar.NewPostgresGrammar()
 
 	// Case 1: OnConflictUpdate Success (single and multiple conflict columns)
-	db := &mockDb{}
+	db := &mockDb{execResult: pgconn.NewCommandTag("INSERT 0 1")}
 	qb := NewQueryBuilder[testModel, testMutator](
 		db,
 		compiler,
@@ -893,8 +926,9 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		[]string{"email"},
 		qbUpdate.GetOnConflict().UpdateColumns,
 	)
-	err := qbUpdate.Insert(ctx, mut)
+	inserted, err := qbUpdate.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
 	qbMultiUpdate := qb.Clone().OnConflictUpdate(
 		testSchema.ID,
@@ -906,8 +940,9 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		[]string{"id", "email"},
 		qbMultiUpdate.GetOnConflict().ConflictColumns,
 	)
-	err = qbMultiUpdate.Insert(ctx, mut)
+	inserted, err = qbMultiUpdate.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
 	// Case 2: OnConflictDoNothing with single and multiple conflict columns
 	qbDoNothing := qb.Clone().OnConflictDoNothing(
@@ -918,8 +953,9 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		[]string{"id"},
 		qbDoNothing.GetOnConflict().ConflictColumns,
 	)
-	err = qbDoNothing.Insert(ctx, mut)
+	inserted, err = qbDoNothing.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
 	qbMultiDoNothing := qb.Clone().OnConflictDoNothing(
 		testSchema.ID,
@@ -930,8 +966,9 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		[]string{"id", "email"},
 		qbMultiDoNothing.GetOnConflict().ConflictColumns,
 	)
-	err = qbMultiDoNothing.Insert(ctx, mut)
+	inserted, err = qbMultiDoNothing.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
 	// Targetless DO NOTHING
 	qbTargetlessDoNothing := qb.Clone().OnConflictDoNothing()
@@ -944,10 +981,24 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		contract.OnConflictDoNothing,
 		qbTargetlessDoNothing.GetOnConflict().Action,
 	)
-	err = qbTargetlessDoNothing.Insert(ctx, mut)
+	inserted, err = qbTargetlessDoNothing.Insert(ctx, mut)
 	require.NoError(t, err)
+	assert.True(t, inserted)
 
-	// Case 3: Error during Insert with OnConflict
+	// Case 3: OnConflictDoNothing skipped (0 rows inserted)
+	dbDoNothingZero := &mockDb{execResult: pgconn.NewCommandTag("INSERT 0 0")}
+	qbDoNothingZero := NewQueryBuilder[testModel, testMutator](
+		dbDoNothingZero,
+		compiler,
+		testTable,
+		testModelHydrate,
+		testMutatorDehydrate,
+	).OnConflictDoNothing(testSchema.ID)
+	inserted, err = qbDoNothingZero.Insert(ctx, mut)
+	require.NoError(t, err)
+	assert.False(t, inserted)
+
+	// Case 4: Error during Insert with OnConflict
 	dbErr := &mockDb{execErr: errors.New("exec conflict fail")}
 	qbErr := NewQueryBuilder[testModel, testMutator](
 		dbErr,
@@ -956,8 +1007,9 @@ func Test_QueryBuilder_OnConflict(t *testing.T) {
 		testModelHydrate,
 		testMutatorDehydrate,
 	)
-	err = qbErr.OnConflictDoNothing(testSchema.ID).Insert(ctx, mut)
+	inserted, err = qbErr.OnConflictDoNothing(testSchema.ID).Insert(ctx, mut)
 	require.Error(t, err)
+	assert.False(t, inserted)
 	assert.Contains(t, err.Error(), "exec conflict fail")
 }
 

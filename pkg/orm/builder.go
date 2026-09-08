@@ -682,31 +682,40 @@ func (qb *QueryBuilder[Model, Mutator]) Exists(
 }
 
 // Insert inserts a single mutator record into the database.
+// It returns true if the row was inserted, or false if it was skipped (e.g. ON CONFLICT DO NOTHING).
 func (qb *QueryBuilder[Model, Mutator]) Insert(
 	ctx context.Context,
 	mutator Mutator,
-) error {
-	return qb.InsertMany(ctx, []Mutator{mutator})
+) (bool, error) {
+	affected, err := qb.InsertMany(ctx, []Mutator{mutator})
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 // InsertMany inserts multiple mutator records into the database.
+// It returns the number of rows affected (inserted).
 func (qb *QueryBuilder[Model, Mutator]) InsertMany(
 	ctx context.Context,
 	mutators []Mutator,
-) error {
+) (int64, error) {
+	if len(mutators) == 0 {
+		return 0, nil
+	}
 	values := make([][]contract.ColumnValue, len(mutators))
 	for i := range mutators {
 		values[i] = qb.mutatorToColumnValues(&mutators[i])
 	}
 	sql, bindings := qb.compiler.CompileInsert(qb, values)
-	_, err := qb.db.Exec(ctx, sql, bindings...)
+	tag, err := qb.db.Exec(ctx, sql, bindings...)
 	if err != nil {
-		return fmt.Errorf(
+		return 0, fmt.Errorf(
 			"failed executing bulk insert -> %w",
 			err,
 		)
 	}
-	return nil
+	return tag.RowsAffected(), nil
 }
 
 // beginTx initiates a database transaction using the underlying DB.
