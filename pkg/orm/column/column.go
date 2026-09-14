@@ -45,6 +45,8 @@ func (c Column[Model, Type]) PostgresCast() string {
 		return "::numeric[]"
 	case pgtype.Point, *pgtype.Point:
 		return "::point[]"
+	case []byte, *[]byte:
+		return "::bytea[]"
 	default:
 		return "::text[]"
 	}
