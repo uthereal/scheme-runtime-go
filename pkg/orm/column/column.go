@@ -3,6 +3,8 @@
 package column
 
 import (
+	"net"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,20 +35,34 @@ func (c Column[Model, Type]) PostgresCast() string {
 		return "::integer[]"
 	case int64, *int64:
 		return "::bigint[]"
+	case uint, *uint, uint64, *uint64:
+		return "::bigint[]"
+	case uint32, *uint32:
+		return "::integer[]"
+	case uint16, *uint16, uint8, *uint8:
+		return "::smallint[]"
 	case bool, *bool:
 		return "::boolean[]"
 	case float64, *float64:
 		return "::double precision[]"
 	case time.Time, *time.Time:
 		return "::timestamp with time zone[]"
-	case time.Duration, *time.Duration:
+	case pgtype.Interval, *pgtype.Interval, time.Duration, *time.Duration:
 		return "::interval[]"
 	case pgtype.Numeric, *pgtype.Numeric:
 		return "::numeric[]"
 	case pgtype.Point, *pgtype.Point:
 		return "::point[]"
+	case pgtype.Bits, *pgtype.Bits:
+		return "::varbit[]"
 	case []byte, *[]byte:
 		return "::bytea[]"
+	case netip.Addr, *netip.Addr:
+		return "::inet[]"
+	case netip.Prefix, *netip.Prefix:
+		return "::cidr[]"
+	case net.HardwareAddr, *net.HardwareAddr:
+		return "::macaddr[]"
 	default:
 		return "::text[]"
 	}

@@ -28,7 +28,7 @@ var Schema = struct {
 			UserID         column.NumericColumn[Profile, int64]
 			Bio            column.NullableStringColumn[Profile, string]
 			Location       column.NullableGeoColumn[Profile, pgtype.Point]
-			ActiveDuration column.DurationColumn[Profile, time.Duration]
+			ActiveDuration column.IntervalColumn[Profile, pgtype.Interval]
 			IsPublic       column.NullableColumn[Profile, bool]
 		}
 		Post struct {
@@ -71,7 +71,7 @@ var Schema = struct {
 			UserID         column.NumericColumn[Profile, int64]
 			Bio            column.NullableStringColumn[Profile, string]
 			Location       column.NullableGeoColumn[Profile, pgtype.Point]
-			ActiveDuration column.DurationColumn[Profile, time.Duration]
+			ActiveDuration column.IntervalColumn[Profile, pgtype.Interval]
 			IsPublic       column.NullableColumn[Profile, bool]
 		}
 		Post struct {
@@ -122,7 +122,7 @@ var Schema = struct {
 			UserID         column.NumericColumn[Profile, int64]
 			Bio            column.NullableStringColumn[Profile, string]
 			Location       column.NullableGeoColumn[Profile, pgtype.Point]
-			ActiveDuration column.DurationColumn[Profile, time.Duration]
+			ActiveDuration column.IntervalColumn[Profile, pgtype.Interval]
 			IsPublic       column.NullableColumn[Profile, bool]
 		}{
 			ID:     column.NumericColumn[Profile, int64]{Name: "id"},
@@ -131,7 +131,7 @@ var Schema = struct {
 			Location: column.NullableGeoColumn[Profile, pgtype.Point]{
 				Name: "location",
 			},
-			ActiveDuration: column.DurationColumn[Profile, time.Duration]{
+			ActiveDuration: column.IntervalColumn[Profile, pgtype.Interval]{
 				Name: "active_duration",
 			},
 			IsPublic: column.NullableColumn[Profile, bool]{Name: "is_public"},

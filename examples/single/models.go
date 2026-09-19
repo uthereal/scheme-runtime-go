@@ -27,7 +27,7 @@ type Profile struct {
 	UserID         int64
 	Bio            *string
 	Location       *pgtype.Point
-	ActiveDuration time.Duration
+	ActiveDuration pgtype.Interval
 	IsPublic       *bool
 }
 

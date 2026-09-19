@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/column"
 )
@@ -293,6 +294,11 @@ func (m *mockRows) Values() ([]any, error) {
 
 // FieldDescriptions returns mock field descriptions.
 func (m *mockRows) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+
+// TypeMap returns the type map for the rows.
+func (m *mockRows) TypeMap() *pgtype.Map {
 	return nil
 }
 

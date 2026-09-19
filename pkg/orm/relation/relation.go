@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm"
@@ -304,6 +305,36 @@ func derefValue(val any) any {
 		}
 		return *p
 	case *float32:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *netip.Addr:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *netip.Prefix:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *uint64:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *uint32:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *uint16:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *uint8:
 		if p == nil {
 			return nil
 		}

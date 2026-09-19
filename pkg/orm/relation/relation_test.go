@@ -2,6 +2,7 @@ package relation
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -133,3 +134,21 @@ func Test_Relation_Customise_Isolation(t *testing.T) {
 	assert.Len(t, wheresB, 1)
 	assert.Equal(t, filterB, wheresB[0])
 }
+
+func Test_Relation_DerefValue(t *testing.T) {
+	addr := netip.MustParseAddr("192.168.1.1")
+	assert.Equal(t, addr, toComparableKey(&addr))
+	var nilAddr *netip.Addr
+	assert.Nil(t, toComparableKey(nilAddr))
+
+	prefix := netip.MustParsePrefix("10.0.0.0/24")
+	assert.Equal(t, prefix, toComparableKey(&prefix))
+	var nilPrefix *netip.Prefix
+	assert.Nil(t, toComparableKey(nilPrefix))
+
+	var u uint64 = 42
+	assert.Equal(t, u, toComparableKey(&u))
+	var nilU *uint64
+	assert.Nil(t, toComparableKey(nilU))
+}
+

@@ -575,14 +575,17 @@ func Test_Integration_Relations(t *testing.T) {
 			P:     pgtype.Vec2{X: 37.77, Y: -122.41},
 			Valid: true,
 		}
-		dur := time.Hour * 5
+		dur := pgtype.Interval{
+			Microseconds: (5 * time.Hour).Microseconds(),
+			Valid:        true,
+		}
 		pubVal := true
 
 		_, err = NewProfileQuery(db).InsertReturning(ctx, ProfileMutator{
 			UserID:         contract.Set[int64]{IsSet: true, Value: user.ID},
 			Bio:            contract.Set[*string]{IsSet: true, Value: &bio},
 			Location:       contract.Set[*pgtype.Point]{IsSet: true, Value: &loc},
-			ActiveDuration: contract.Set[time.Duration]{IsSet: true, Value: dur},
+			ActiveDuration: contract.Set[pgtype.Interval]{IsSet: true, Value: dur},
 			IsPublic:       contract.Set[*bool]{IsSet: true, Value: &pubVal},
 		})
 		require.NoError(t, err)
@@ -877,9 +880,12 @@ func Test_Integration_AdvancedFeatures(t *testing.T) {
 				Valid: true,
 			},
 		},
-		ActiveDuration: contract.Set[time.Duration]{
+		ActiveDuration: contract.Set[pgtype.Interval]{
 			IsSet: true,
-			Value: 2 * time.Hour,
+			Value: pgtype.Interval{
+				Microseconds: (2 * time.Hour).Microseconds(),
+				Valid:        true,
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -893,9 +899,12 @@ func Test_Integration_AdvancedFeatures(t *testing.T) {
 				Valid: true,
 			},
 		},
-		ActiveDuration: contract.Set[time.Duration]{
+		ActiveDuration: contract.Set[pgtype.Interval]{
 			IsSet: true,
-			Value: 5 * time.Hour,
+			Value: pgtype.Interval{
+				Microseconds: (5 * time.Hour).Microseconds(),
+				Valid:        true,
+			},
 		},
 	})
 	require.NoError(t, err)

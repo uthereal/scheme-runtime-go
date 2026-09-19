@@ -24,7 +24,7 @@ type ProfileMutator struct {
 	UserID         contract.Set[int64]
 	Bio            contract.Set[*string]
 	Location       contract.Set[*pgtype.Point]
-	ActiveDuration contract.Set[time.Duration]
+	ActiveDuration contract.Set[pgtype.Interval]
 	IsPublic       contract.Set[*bool]
 }
 
