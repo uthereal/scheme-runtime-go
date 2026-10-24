@@ -3,6 +3,7 @@ package single
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 )
@@ -47,6 +48,6 @@ type CommentMutator struct {
 
 // GroupMutator manages partial payload mutations for Group fields.
 type GroupMutator struct {
-	ID   contract.Set[string]
+	ID   contract.Set[uuid.UUID]
 	Name contract.Set[string]
 }

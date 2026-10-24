@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/samber/lo"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
@@ -63,6 +64,8 @@ func (c Column[Model, Type]) PostgresCast() string {
 		return "::cidr[]"
 	case net.HardwareAddr, *net.HardwareAddr:
 		return "::macaddr[]"
+	case uuid.UUID, *uuid.UUID:
+		return "::uuid[]"
 	default:
 		return "::text[]"
 	}

@@ -2,10 +2,11 @@ package fields
 
 import (
 	"testing"
-	"uuid"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
+	"github.com/uthereal/scheme-runtime-go/pkg/orm/column"
 	"go.chromium.org/luci/common/data/aip160"
 )
 
@@ -82,4 +83,30 @@ func Test_UUIDField_BuildCondition(t *testing.T) {
 	// Test coercion error
 	_, err = f.BuildCondition(contract.OpEq, &aip160.Arg{})
 	assert.Error(t, err)
+}
+
+// Test_UUIDField_WithUUIDColumn verifies that column.UUIDColumn satisfies
+// contract.Aip160UUIDSubject.
+func Test_UUIDField_WithUUIDColumn(t *testing.T) {
+	col := column.UUIDColumn[any]{
+		Column: column.Column[any, uuid.UUID]{Name: "id"},
+	}
+	f := NewUUIDField[uuid.UUID, contract.Where](col)
+	assert.Equal(t, contract.TypeUUID, f.Type())
+
+	filter, err := aip160.ParseFilter(
+		"id = \"550e8400-e29b-41d4-a716-446655440000\"",
+	)
+	assert.NoError(t, err)
+	seq := filter.Expression.Sequences[0]
+	arg := seq.Factors[0].Terms[0].Simple.Restriction.Arg
+
+	cond, err := f.BuildCondition(contract.OpEq, arg)
+	assert.NoError(t, err)
+	assert.NotNil(t, cond)
+
+	basicCond, ok := cond.(contract.BasicWhere)
+	assert.True(t, ok)
+	expectedUUID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	assert.Equal(t, expectedUUID, basicCond.GetValue())
 }

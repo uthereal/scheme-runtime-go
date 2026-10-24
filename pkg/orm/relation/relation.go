@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/google/uuid"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/where"
@@ -335,6 +336,11 @@ func derefValue(val any) any {
 		}
 		return *p
 	case *uint8:
+		if p == nil {
+			return nil
+		}
+		return *p
+	case *uuid.UUID:
 		if p == nil {
 			return nil
 		}

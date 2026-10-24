@@ -2,8 +2,8 @@ package contract
 
 import (
 	"time"
-	"uuid"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.chromium.org/luci/common/data/aip160"
 )

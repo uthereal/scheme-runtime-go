@@ -2,8 +2,8 @@ package fields
 
 import (
 	"fmt"
-	"uuid"
 
+	"github.com/google/uuid"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	ormaip160 "github.com/uthereal/scheme-runtime-go/pkg/orm/aip160"
 	luciaip160 "go.chromium.org/luci/common/data/aip160"

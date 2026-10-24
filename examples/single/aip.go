@@ -1,10 +1,33 @@
 package single
 
 import (
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/aip160/fields"
 )
+
+// GlobalGroupAip160Fields defines global search fields for Group models.
+var GlobalGroupAip160Fields = []contract.Aip160Field[contract.Where]{
+	fields.NewStringField[
+		string,
+		contract.Where,
+	](Schema.Public.Group.Name),
+}
+
+// MapGroupColumnToAip160Field maps Group column names to AIP-160 fields.
+var MapGroupColumnToAip160Field = map[string]contract.Aip160Field[
+	contract.Where,
+]{
+	"id": fields.NewUUIDField[
+		uuid.UUID,
+		contract.Where,
+	](Schema.Public.Group.ID),
+	"name": fields.NewStringField[
+		string,
+		contract.Where,
+	](Schema.Public.Group.Name),
+}
 
 // GlobalPostAip160Fields defines global search fields for Post models.
 var GlobalPostAip160Fields = []contract.Aip160Field[contract.Where]{

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm"
@@ -281,6 +282,8 @@ func normalizeKey(val any) any {
 			v[8:10],
 			v[10:16],
 		)
+	case uuid.UUID:
+		return strings.ToLower(v.String())
 	case pgtype.UUID:
 		if !v.Valid {
 			return nil
@@ -293,6 +296,8 @@ func normalizeKey(val any) any {
 			v.Bytes[8:10],
 			v.Bytes[10:16],
 		)
+	case fmt.Stringer:
+		return strings.ToLower(v.String())
 	case string:
 		return strings.ToLower(v)
 	}

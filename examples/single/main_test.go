@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
@@ -570,6 +571,40 @@ func Test_Integration_Queries_And_Filters(t *testing.T) {
 			MapPostColumnToAip160Field,
 		)
 		require.Error(t, err)
+
+		// 4. UUID field filtering on Group
+		groupQb, err := NewGroupQuery(db).WhereAip160(
+			`id = "123e4567-e89b-12d3-a456-426614174000"`,
+			GlobalGroupAip160Fields,
+			MapGroupColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resGroups, err := groupQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resGroups, 1)
+		assert.Equal(t, "GroupA", resGroups[0].Name)
+		expectedID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+		assert.Equal(t, expectedID, resGroups[0].ID)
+
+		// UUID inequality filter
+		groupQb, err = NewGroupQuery(db).WhereAip160(
+			`id != "123e4567-e89b-12d3-a456-426614174000"`,
+			GlobalGroupAip160Fields,
+			MapGroupColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resGroups, err = groupQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resGroups, 1)
+		assert.Equal(t, "GroupB", resGroups[0].Name)
+
+		// Invalid UUID string returns error
+		_, err = NewGroupQuery(db).WhereAip160(
+			`id = "invalid-uuid"`,
+			GlobalGroupAip160Fields,
+			MapGroupColumnToAip160Field,
+		)
+		require.Error(t, err)
 	})
 }
 
@@ -868,6 +903,10 @@ func Test_Integration_Relations(t *testing.T) {
 			hydratedUser := res[0]
 			require.Len(t, hydratedUser.Groups, 2)
 			assert.Equal(t, "GroupA", hydratedUser.Groups[0].Name)
+			expectedID1 := uuid.MustParse(
+				"123e4567-e89b-12d3-a456-426614174000",
+			)
+			assert.Equal(t, expectedID1, hydratedUser.Groups[0].ID)
 			assert.Equal(t, "GroupB", hydratedUser.Groups[1].Name)
 		},
 	)

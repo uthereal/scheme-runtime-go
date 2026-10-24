@@ -3,6 +3,7 @@ package single
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -53,6 +54,6 @@ type Comment struct {
 
 // Group represents a logical collection of users.
 type Group struct {
-	ID   string
+	ID   uuid.UUID
 	Name string
 }
