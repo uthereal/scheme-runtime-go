@@ -19,6 +19,7 @@ import (
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/where"
 )
 
+// schemaDDL defines the single-schema database tables for testing.
 const schemaDDL = `
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
@@ -81,8 +82,10 @@ INSERT INTO user_groups (user_id, group_id) VALUES
 ON CONFLICT (user_id, group_id) DO NOTHING;
 `
 
+// Relations exposes the public schema definitions for test queries.
 var Relations = &Schema.Public
 
+// pgContainer holds the shared Postgres test container instance.
 var pgContainer *testutil.PostgresContainer
 
 // TestMain manages the global Postgres test container.
@@ -295,7 +298,8 @@ func Test_Integration_Mutations(t *testing.T) {
 		assert.Equal(t, user.ID, upsertedUser.ID)
 		assert.Equal(t, "alice_upsert@example.com", upsertedUser.Email)
 
-		// OnConflictDoNothing returns ErrNoRows when insert conflicts with InsertReturning
+		// OnConflictDoNothing returns ErrNoRows when insert conflicts
+		// with InsertReturning
 		nothingMut := UserMutator{
 			ID:    contract.Set[int64]{IsSet: true, Value: user.ID},
 			Email: contract.Set[string]{
@@ -309,7 +313,8 @@ func Test_Integration_Mutations(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, pgx.ErrNoRows))
 
-		// Non-returning Insert with OnConflictDoNothing returns (false, nil) when conflict occurs
+		// Non-returning Insert with OnConflictDoNothing returns (false, nil)
+		// when conflict occurs
 		insertedNothing, err := NewUserQuery(db).OnConflictDoNothing(
 			Schema.Public.User.ID,
 		).Insert(ctx, nothingMut)
@@ -456,6 +461,115 @@ func Test_Integration_Queries_And_Filters(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, res, 1)
 		assert.Equal(t, "u2@example.com", res[0].Email)
+	})
+
+	t.Run("AIP-160 Global and Field Filtering", func(t *testing.T) {
+		// 1. User email global filter
+		userQb, err := NewUserQuery(db).WhereAip160(
+			`"u1"`,
+			GlobalUserAip160Fields,
+			MapUserColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resUsers, err := userQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resUsers, 1)
+		assert.Equal(t, "u1@example.com", resUsers[0].Email)
+
+		// 2. Field filter combined with global search
+		userQb, err = NewUserQuery(db).WhereAip160(
+			`age > 30 AND "example"`,
+			GlobalUserAip160Fields,
+			MapUserColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resUsers, err = userQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resUsers, 1)
+		assert.Equal(t, "u2@example.com", resUsers[0].Email)
+
+		// 3. Multi-field global search on Posts (matches Title OR Content)
+		u1, err := NewUserQuery(db).
+			Where(Schema.Public.User.Email.Eq("u1@example.com")).
+			First(ctx)
+		require.NoError(t, err)
+
+		var r1 pgtype.Numeric
+		_ = r1.Scan("4.80")
+		var r2 pgtype.Numeric
+		_ = r2.Scan("3.50")
+
+		_, err = NewPostQuery(db).InsertManyReturning(ctx, []PostMutator{
+			{
+				UserID: contract.Set[int64]{IsSet: true, Value: u1.ID},
+				Title: contract.Set[string]{
+					IsSet: true,
+					Value: "Learning PostgreSQL",
+				},
+				Content: contract.Set[string]{
+					IsSet: true,
+					Value: "A deep dive into database internals",
+				},
+				Rating: contract.Set[pgtype.Numeric]{IsSet: true, Value: r1},
+			},
+			{
+				UserID: contract.Set[int64]{IsSet: true, Value: u1.ID},
+				Title: contract.Set[string]{
+					IsSet: true,
+					Value: "Advanced Go Concurrency",
+				},
+				Content: contract.Set[string]{
+					IsSet: true,
+					Value: "Patterns with channels and mutexes",
+				},
+				Rating: contract.Set[pgtype.Numeric]{IsSet: true, Value: r2},
+			},
+		})
+		require.NoError(t, err)
+
+		// Matches in title ("PostgreSQL") with case-insensitivity
+		postQb, err := NewPostQuery(db).WhereAip160(
+			`"postgres"`,
+			GlobalPostAip160Fields,
+			MapPostColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resPosts, err := postQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resPosts, 1)
+		assert.Equal(t, "Learning PostgreSQL", resPosts[0].Title)
+
+		// Matches in content ("database")
+		postQb, err = NewPostQuery(db).WhereAip160(
+			`"database"`,
+			GlobalPostAip160Fields,
+			MapPostColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resPosts, err = postQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resPosts, 1)
+		assert.Equal(t, "Learning PostgreSQL", resPosts[0].Title)
+
+		// Combined field filter and global search
+		postQb, err = NewPostQuery(db).WhereAip160(
+			`rating > 4.0 AND "database"`,
+			GlobalPostAip160Fields,
+			MapPostColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		resPosts, err = postQb.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, resPosts, 1)
+		assert.Equal(t, "Learning PostgreSQL", resPosts[0].Title)
+
+		// Unquoted global filter fails fast
+		_, err = NewPostQuery(db).WhereAip160(
+			`rating > 4.0 AND database`,
+			GlobalPostAip160Fields,
+			MapPostColumnToAip160Field,
+		)
+		require.Error(t, err)
 	})
 }
 
@@ -1109,6 +1223,7 @@ func Test_Integration_AdvancedFeatures(t *testing.T) {
 	})
 }
 
+// pointerTo returns a pointer to the given value.
 func pointerTo[T any](v T) *T {
 	return &v
 }

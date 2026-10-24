@@ -8,13 +8,23 @@ import (
 	"go.chromium.org/luci/common/data/aip160"
 )
 
+// mockStringSubject is a mock implementation of Aip160StringSubject.
 type mockStringSubject struct {
-	EqFunc  func(string) string
-	NeqFunc func(string) string
+	EqFunc           func(string) string
+	NeqFunc          func(string) string
+	ContainsFoldFunc func(string) string
 }
 
-func (m mockStringSubject) Eq(val string) string  { return m.EqFunc(val) }
+// Eq delegates to EqFunc.
+func (m mockStringSubject) Eq(val string) string { return m.EqFunc(val) }
+
+// Neq delegates to NeqFunc.
 func (m mockStringSubject) Neq(val string) string { return m.NeqFunc(val) }
+
+// ContainsFold delegates to ContainsFoldFunc.
+func (m mockStringSubject) ContainsFold(val string) string {
+	return m.ContainsFoldFunc(val)
+}
 
 // Test_StringField_Type tests the Type method of stringField.
 func Test_StringField_Type(t *testing.T) {
@@ -40,8 +50,9 @@ func Test_StringField_ValidateArg(t *testing.T) {
 // Test_StringField_BuildCondition tests BuildCondition of stringField.
 func Test_StringField_BuildCondition(t *testing.T) {
 	subject := mockStringSubject{
-		EqFunc:  func(v string) string { return "eq" },
-		NeqFunc: func(v string) string { return "neq" },
+		EqFunc:           func(v string) string { return "eq" },
+		NeqFunc:          func(v string) string { return "neq" },
+		ContainsFoldFunc: func(v string) string { return "contains_fold" },
 	}
 	f := NewStringField[string, string](subject)
 
@@ -57,6 +68,10 @@ func Test_StringField_BuildCondition(t *testing.T) {
 	cond, err = f.BuildCondition(contract.OpNotEq, arg)
 	assert.NoError(t, err)
 	assert.Equal(t, "neq", cond)
+
+	cond, err = f.BuildCondition(contract.OpHas, arg)
+	assert.NoError(t, err)
+	assert.Equal(t, "contains_fold", cond)
 
 	// Test unsupported operator
 	_, err = f.BuildCondition(contract.OpGt, arg)

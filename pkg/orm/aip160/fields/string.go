@@ -46,10 +46,12 @@ func (f *stringField[T, R]) BuildCondition(
 		return zero, err
 	}
 	switch op {
-	case contract.OpEq, contract.OpDefault:
+	case contract.OpEq:
 		return f.subject.Eq(T(val)), nil
 	case contract.OpNotEq:
 		return f.subject.Neq(T(val)), nil
+	case contract.OpHas:
+		return f.subject.ContainsFold(val), nil
 	default:
 		return zero, fmt.Errorf(
 			"unsupported operator %q for string field",

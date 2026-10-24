@@ -13,6 +13,7 @@ import (
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 )
 
+// multiSchemaDDL defines the cross-schema database tables for testing.
 const multiSchemaDDL = `
 CREATE SCHEMA IF NOT EXISTS tenant;
 
@@ -40,6 +41,7 @@ CREATE TABLE tenant.user_permissions (
 );
 `
 
+// pgContainer holds the shared Postgres test container instance.
 var pgContainer *testutil.PostgresContainer
 
 // TestMain manages the global Postgres test container.
@@ -120,7 +122,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 		u1, err := userQuery.InsertReturning(ctx, TenantUserMutator{
 			Email: contract.Set[string]{
 				IsSet: true,
-				Value: "user1@tenant.com",
+				Value: "user1@tenant.example.com",
 			},
 			Status: contract.Set[UserStatus]{
 				IsSet: true,
@@ -137,7 +139,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 		u2, err := userQuery.InsertReturning(ctx, TenantUserMutator{
 			Email: contract.Set[string]{
 				IsSet: true,
-				Value: "user2@tenant.com",
+				Value: "user2@tenant.example.com",
 			},
 			Status: contract.Set[UserStatus]{
 				IsSet: true,
@@ -154,7 +156,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 		u3, err := userQuery.InsertReturning(ctx, TenantUserMutator{
 			Email: contract.Set[string]{
 				IsSet: true,
-				Value: "user3@tenant.com",
+				Value: "user3@tenant.example.com",
 			},
 			Status: contract.Set[UserStatus]{
 				IsSet: true,
@@ -182,7 +184,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 	t.Run("Eager Load: TenantUser -> Role (BelongsTo)", func(t *testing.T) {
 		users, err := NewTenantUserQuery(db).
 			With(Schema.Tenant.TenantUser.Role).
-			Where(Schema.Tenant.TenantUser.Email.Eq("user1@tenant.com")).
+			Where(Schema.Tenant.TenantUser.Email.Eq("user1@tenant.example.com")).
 			Get(ctx)
 		require.NoError(t, err)
 		require.Len(t, users, 1)
@@ -203,8 +205,8 @@ func Test_Integration_MultiSchema(t *testing.T) {
 
 		r := roles[0]
 		require.Len(t, r.Users, 2)
-		assert.Equal(t, "user1@tenant.com", r.Users[0].Email)
-		assert.Equal(t, "user2@tenant.com", r.Users[1].Email)
+		assert.Equal(t, "user1@tenant.example.com", r.Users[0].Email)
+		assert.Equal(t, "user2@tenant.example.com", r.Users[1].Email)
 	})
 
 	t.Run(
@@ -212,7 +214,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 		func(t *testing.T) {
 		users, err := NewTenantUserQuery(db).
 			With(Schema.Tenant.TenantUser.Permissions).
-			Where(Schema.Tenant.TenantUser.Email.Eq("user1@tenant.com")).
+			Where(Schema.Tenant.TenantUser.Email.Eq("user1@tenant.example.com")).
 			Get(ctx)
 		require.NoError(t, err)
 		require.Len(t, users, 1)
@@ -224,7 +226,7 @@ func Test_Integration_MultiSchema(t *testing.T) {
 
 		users3, err := NewTenantUserQuery(db).
 			With(Schema.Tenant.TenantUser.Permissions).
-			Where(Schema.Tenant.TenantUser.Email.Eq("user3@tenant.com")).
+			Where(Schema.Tenant.TenantUser.Email.Eq("user3@tenant.example.com")).
 			Get(ctx)
 		require.NoError(t, err)
 		require.Len(t, users3, 1)
@@ -241,8 +243,8 @@ func Test_Integration_MultiSchema(t *testing.T) {
 			Get(ctx)
 		require.NoError(t, err)
 		require.Len(t, activeUsers, 2)
-		assert.Equal(t, "user1@tenant.com", activeUsers[0].Email)
-		assert.Equal(t, "user3@tenant.com", activeUsers[1].Email)
+		assert.Equal(t, "user1@tenant.example.com", activeUsers[0].Email)
+		assert.Equal(t, "user3@tenant.example.com", activeUsers[1].Email)
 	})
 
 	t.Run("Cross-Schema Pagination", func(t *testing.T) {
@@ -252,6 +254,43 @@ func Test_Integration_MultiSchema(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, pag.HasMore)
 		require.Len(t, pag.Items, 1)
-		assert.Equal(t, "user2@tenant.com", pag.Items[0].Email)
+		assert.Equal(t, "user2@tenant.example.com", pag.Items[0].Email)
+	})
+
+	t.Run("Cross-Schema AIP-160 Global Filtering", func(t *testing.T) {
+		// 1. Enum filter + global filter matching user1
+		q, err := NewTenantUserQuery(db).WhereAip160(
+			`status = "active" AND "user1"`,
+			GlobalTenantUserAip160Fields,
+			MapTenantUserColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		matchedUsers, err := q.Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, matchedUsers, 1)
+		assert.Equal(t, "user1@tenant.example.com", matchedUsers[0].Email)
+
+		// 2. Global search matching all active tenant users
+		q, err = NewTenantUserQuery(db).WhereAip160(
+			`status = "active" AND "tenant.example.com"`,
+			GlobalTenantUserAip160Fields,
+			MapTenantUserColumnToAip160Field,
+		)
+		require.NoError(t, err)
+		matchedUsers, err = q.OrderBy(
+			Schema.Tenant.TenantUser.Email.Asc(),
+		).Get(ctx)
+		require.NoError(t, err)
+		require.Len(t, matchedUsers, 2)
+		assert.Equal(t, "user1@tenant.example.com", matchedUsers[0].Email)
+		assert.Equal(t, "user3@tenant.example.com", matchedUsers[1].Email)
+
+		// 3. Unquoted global string literal fails fast
+		_, err = NewTenantUserQuery(db).WhereAip160(
+			`status = "active" AND user1@tenant.example.com`,
+			GlobalTenantUserAip160Fields,
+			MapTenantUserColumnToAip160Field,
+		)
+		require.Error(t, err)
 	})
 }

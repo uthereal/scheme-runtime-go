@@ -107,10 +107,10 @@ func (r mockRelation) EagerLoad(
 // Test_QueryBuilder_ColumnsAST tests standard and nullable columns.
 func Test_QueryBuilder_ColumnsAST(t *testing.T) {
 	// 1. Base Column Check
-	eqCond := testSchema.Email.Eq("test@google.com").(where.BasicWhere)
+	eqCond := testSchema.Email.Eq("test@example.com").(where.BasicWhere)
 	assert.Equal(t, "email", eqCond.Column)
 	assert.Equal(t, contract.OpEqual, eqCond.Operator)
-	assert.Equal(t, "test@google.com", eqCond.Value)
+	assert.Equal(t, "test@example.com", eqCond.Value)
 
 	inCond := testSchema.Email.In("a", "b").(where.InWhere)
 	assert.Equal(t, "email", inCond.Column)
@@ -127,9 +127,9 @@ func Test_QueryBuilder_ColumnsAST(t *testing.T) {
 	assert.Equal(t, 25, ageCondVal.Value)
 
 	// 3. String wildcard methods
-	containsCond := testSchema.Email.Contains("google").(where.BasicWhere)
+	containsCond := testSchema.Email.Contains("example").(where.BasicWhere)
 	assert.Equal(t, contract.OpLike, containsCond.Operator)
-	assert.Equal(t, "%google%", containsCond.Value)
+	assert.Equal(t, "%example%", containsCond.Value)
 
 	prefixCond := testSchema.Email.HasPrefix("admin").(where.BasicWhere)
 	assert.Equal(t, contract.OpLike, prefixCond.Operator)
@@ -145,8 +145,8 @@ func Test_QueryBuilder_TerminalExecutions(t *testing.T) {
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
-			{int64(2), "bob@google.com"},
+			{int64(1), "alice@example.com"},
+			{int64(2), "bob@example.com"},
 		},
 	}
 	db := &mockDb{queryRows: mRows}
@@ -164,9 +164,9 @@ func Test_QueryBuilder_TerminalExecutions(t *testing.T) {
 	require.Len(t, results, 2)
 
 	assert.Equal(t, int64(1), results[0].ID)
-	assert.Equal(t, "alice@google.com", results[0].Email)
+	assert.Equal(t, "alice@example.com", results[0].Email)
 	assert.Equal(t, int64(2), results[1].ID)
-	assert.Equal(t, "bob@google.com", results[1].Email)
+	assert.Equal(t, "bob@example.com", results[1].Email)
 
 	// 2. Test Count aggregate scan
 	db.queryRowValue = &mockRow{value: int64(42)}
@@ -183,9 +183,9 @@ func Test_QueryBuilder_TerminalExecutions(t *testing.T) {
 	mRowsPagination := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(10), "p1@google.com"},
-			{int64(11), "p2@google.com"},
-			{int64(12), "p3@google.com"},
+			{int64(10), "p1@example.com"},
+			{int64(11), "p2@example.com"},
+			{int64(12), "p3@example.com"},
 		},
 	}
 	db.queryRows = mRowsPagination
@@ -221,7 +221,7 @@ func Test_QueryBuilder_TerminalExecutions_ErrorPaths(t *testing.T) {
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("mock rows.Err error"),
 	}
@@ -255,7 +255,7 @@ func Test_QueryBuilder_TerminalExecutions_ErrorPaths(t *testing.T) {
 	mRowsScanErr := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{"not-an-int", "alice@google.com"},
+			{"not-an-int", "alice@example.com"},
 		},
 	}
 	dbGetScanErr := &mockDb{queryRows: mRowsScanErr}
@@ -305,9 +305,9 @@ func Test_QueryBuilder_PaginateAip158(t *testing.T) {
 	mRows1 := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(10), "p1@google.com"},
-			{int64(11), "p2@google.com"},
-			{int64(12), "p3@google.com"},
+			{int64(10), "p1@example.com"},
+			{int64(11), "p2@example.com"},
+			{int64(12), "p3@example.com"},
 		},
 	}
 	db.queryRows = mRows1
@@ -328,8 +328,8 @@ func Test_QueryBuilder_PaginateAip158(t *testing.T) {
 	mRows2 := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(12), "p3@google.com"},
-			{int64(13), "p4@google.com"},
+			{int64(12), "p3@example.com"},
+			{int64(13), "p4@example.com"},
 		},
 	}
 	db.queryRows = mRows2
@@ -373,7 +373,7 @@ func Test_QueryBuilder_PaginateAip158(t *testing.T) {
 	mRowsDefaultSize := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(10), "p1@google.com"},
+			{int64(10), "p1@example.com"},
 		},
 	}
 	db.queryRows = mRowsDefaultSize
@@ -504,11 +504,33 @@ func Test_QueryBuilder_OrderByAip132(t *testing.T) {
 func Test_QueryBuilder_WhereAip160(t *testing.T) {
 	g := grammar.NewPostgresGrammar()
 
+	globalFields := []contract.Aip160Field[contract.Where]{
+		fields.NewStringField[
+			string,
+			contract.Where,
+		](testSchema.Name),
+		fields.NewStringField[
+			string,
+			contract.Where,
+		](testSchema.Email),
+	}
+
+	singleGlobalField := []contract.Aip160Field[contract.Where]{
+		fields.NewStringField[
+			string,
+			contract.Where,
+		](testSchema.Email),
+	}
+
 	mapColumnNameToAip160Field := map[string]contract.Aip160Field[contract.Where]{
 		"id": fields.NewIntegerField[
 			int64,
 			contract.Where,
 		](testSchema.ID),
+		"name": fields.NewStringField[
+			string,
+			contract.Where,
+		](testSchema.Name),
 		"email": fields.NewStringField[
 			string,
 			contract.Where,
@@ -520,58 +542,125 @@ func Test_QueryBuilder_WhereAip160(t *testing.T) {
 	}
 
 	successTests := []struct {
-		name        string
-		filter      string
-		expectedSql string
+		name             string
+		filter           string
+		globals          []contract.Aip160Field[contract.Where]
+		expectedSql      string
+		expectedBindings []any
 	}{
 		{
 			name:        "Empty string",
 			filter:      "",
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users"`,
 		},
 		{
 			name:        "Whitespace string",
 			filter:      "   ",
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users"`,
 		},
 		{
-			name:        "Simple equality numeric",
-			filter:      "id = 10",
-			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE "id" = $1`,
+			name:             "Simple equality numeric",
+			filter:           "id = 10",
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE "id" = $1`,
+			expectedBindings: []any{int64(10)},
 		},
 		{
-			name:        "Simple equality string",
-			filter:      `email = "p1@google.com"`,
-			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE "email" = $1`,
+			name:             "Simple equality string",
+			filter:           `email = "p1@example.com"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE "email" = $1`,
+			expectedBindings: []any{"p1@example.com"},
+		},
+		{
+			name:             "String has operator",
+			filter:           `email : "p1@example.com"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE "email" ILIKE $1`,
+			expectedBindings: []any{"%p1@example.com%"},
+		},
+		{
+			name:             "String has operator with wildcard escaping",
+			filter:           `email : "user_1%test"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE "email" ILIKE $1`,
+			expectedBindings: []any{`%user\_1\%test%`},
+		},
+		{
+			name:             "Single global field search",
+			filter:           `"alice@example.com"`,
+			globals:          singleGlobalField,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE "email" ILIKE $1`,
+			expectedBindings: []any{"%alice@example.com%"},
+		},
+		{
+			name:             "Multiple global fields search with wildcard escaping",
+			filter:           `"alice_1%example"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE ("name" ILIKE $1 OR "email" ILIKE $2)`,
+			expectedBindings: []any{`%alice\_1\%example%`, `%alice\_1\%example%`},
+		},
+		{
+			name:             "Multiple global fields search",
+			filter:           `"alice@example.com"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE ("name" ILIKE $1 OR "email" ILIKE $2)`,
+			expectedBindings: []any{"%alice@example.com%", "%alice@example.com%"},
+		},
+		{
+			name:        "Field filter AND global search",
+			filter:      `id = 10 AND "alice@example.com"`,
+			globals:     globalFields,
+			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE (("name" ILIKE $1 OR "email" ILIKE $2) AND "id" = $3)`,
+			expectedBindings: []any{
+				"%alice@example.com%",
+				"%alice@example.com%",
+				int64(10),
+			},
+		},
+		{
+			name:             "Negated global search",
+			filter:           `NOT "alice@example.com"`,
+			globals:          globalFields,
+			expectedSql:      `SELECT "id", "email" FROM "public"."users" WHERE NOT (("name" ILIKE $1 OR "email" ILIKE $2))`,
+			expectedBindings: []any{"%alice@example.com%", "%alice@example.com%"},
 		},
 		{
 			name:        "Compound AND",
-			filter:      `id = 10 AND email = "p1@google.com"`,
+			filter:      `id = 10 AND email = "p1@example.com"`,
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE ("email" = $1 AND "id" = $2)`,
 		},
 		{
 			name:        "Compound OR",
-			filter:      `id = 10 OR email = "p1@google.com"`,
+			filter:      `id = 10 OR email = "p1@example.com"`,
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE ("email" = $1 OR "id" = $2)`,
 		},
 		{
 			name:        "Negation",
 			filter:      `NOT id = 10`,
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE NOT ("id" = $1)`,
 		},
 		{
 			name:        "Complex nested logic",
-			filter:      `(id = 10 OR email = "p1@google.com") AND id < 20`,
+			filter:      `(id = 10 OR email = "p1@example.com") AND id < 20`,
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE ("id" < $1 AND ("email" = $2 OR "id" = $3))`,
 		},
 		{
 			name:        "Exact decimal comparison Gt",
 			filter:      "price > 99.99",
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE "price" > $1`,
 		},
 		{
 			name:        "Exact decimal comparison Eq",
 			filter:      "price = 10.5",
+			globals:     globalFields,
 			expectedSql: `SELECT "id", "email" FROM "public"."users" WHERE "price" = $1`,
 		},
 	}
@@ -579,36 +668,84 @@ func Test_QueryBuilder_WhereAip160(t *testing.T) {
 	errorTests := []struct {
 		name          string
 		filter        string
+		globals       []contract.Aip160Field[contract.Where]
 		expectedError string
 	}{
 		{
 			name:          "Unsupported column",
 			filter:        "password = 123",
+			globals:       globalFields,
 			expectedError: "filter field \"password\" not supported",
 		},
 		{
 			name:          "Unsupported operator for type",
 			filter:        "id : 10",
+			globals:       globalFields,
 			expectedError: "does not support operator",
 		},
 		{
 			name:          "Syntax error",
 			filter:        "id == 10",
+			globals:       globalFields,
 			expectedError: "failed to parse filter",
 		},
 		{
-			name:          "Global search error",
+			name:          "Unquoted global search error",
 			filter:        "abc",
-			expectedError: "not supported",
+			globals:       globalFields,
+			expectedError: "expected double-quoted string literal",
 		},
 		{
-			name:          "Missing argument error",
-			filter:        "id",
-			expectedError: "missing argument for filter field \"id\"",
+			name:          "Unquoted dotted global search error",
+			filter:        `id = 10 AND alice@example.com`,
+			globals:       globalFields,
+			expectedError: "expected double-quoted string literal",
+		},
+		{
+			name:          "Quoted global with field traversal error",
+			filter:        `"example".com`,
+			globals:       globalFields,
+			expectedError: "field navigation not supported",
+		},
+		{
+			name:          "Global search when globalFields is empty",
+			filter:        `"alice@example.com"`,
+			globals:       nil,
+			expectedError: "global filter expressions are not supported",
+		},
+		{
+			name:   "Global search with non-string field in globalFields",
+			filter: `"alice@example.com"`,
+			globals: []contract.Aip160Field[contract.Where]{
+				fields.NewIntegerField[
+					int64,
+					contract.Where,
+				](testSchema.ID),
+			},
+			expectedError: "failed to build global condition",
+		},
+		{
+			name:   "Global search build condition error",
+			filter: `"alice@example.com"`,
+			globals: []contract.Aip160Field[contract.Where]{
+				fields.NewRelatedField[contract.Where](
+					fields.NewStringField[
+						string,
+						contract.Where,
+					](testSchema.Email),
+					func(
+						_ contract.Where,
+					) (contract.Where, error) {
+						return nil, errors.New("related mapper error")
+					},
+				),
+			},
+			expectedError: "failed to build global condition",
 		},
 		{
 			name:          "Coercion error",
 			filter:        `id = "abc"`,
+			globals:       globalFields,
 			expectedError: "failed to build condition",
 		},
 	}
@@ -625,13 +762,17 @@ func Test_QueryBuilder_WhereAip160(t *testing.T) {
 
 			res, err := qb.WhereAip160(
 				tc.filter,
+				tc.globals,
 				mapColumnNameToAip160Field,
 			)
 			require.NoError(t, err)
 			assert.NotNil(t, res)
 
-			sql, _ := g.CompileSelect(qb)
+			sql, bindings := g.CompileSelect(qb)
 			assert.Equal(t, tc.expectedSql, sql)
+			if tc.expectedBindings != nil {
+				assert.Equal(t, tc.expectedBindings, bindings)
+			}
 		})
 	}
 
@@ -647,6 +788,7 @@ func Test_QueryBuilder_WhereAip160(t *testing.T) {
 
 			res, err := qb.WhereAip160(
 				tc.filter,
+				tc.globals,
 				mapColumnNameToAip160Field,
 			)
 			require.Error(t, err)
@@ -753,7 +895,7 @@ func Test_QueryBuilder_First(t *testing.T) {
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(42), "first@google.com"},
+			{int64(42), "first@example.com"},
 		},
 	}
 	db := &mockDb{queryRows: mRows}
@@ -767,7 +909,7 @@ func Test_QueryBuilder_First(t *testing.T) {
 	res, err := qb.First(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), res.ID)
-	assert.Equal(t, "first@google.com", res.Email)
+	assert.Equal(t, "first@example.com", res.Email)
 
 	// Case 2: No records found
 	mRowsEmpty := &mockRows{
@@ -1606,7 +1748,7 @@ func Test_QueryBuilder_PaginateWithCount(t *testing.T) {
 		queryRows: &mockRows{
 			cols: []string{"id", "email"},
 			records: [][]any{
-				{int64(10), "p1@google.com"},
+				{int64(10), "p1@example.com"},
 			},
 		},
 	}
@@ -1749,7 +1891,7 @@ func Test_QueryBuilder_Get_RowIterationError(t *testing.T) {
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("iteration failed"),
 	}
@@ -1776,7 +1918,7 @@ func Test_QueryBuilder_InsertManyReturning_RowIterationError(
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("insert iter failed"),
 	}
@@ -1804,7 +1946,7 @@ func Test_QueryBuilder_UpdateManyReturning_RowIterationError(
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("update iter failed"),
 	}
@@ -1834,7 +1976,7 @@ func Test_QueryBuilder_UpdateReturning_RowIterationError(
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("update iter failed"),
 	}
@@ -1864,7 +2006,7 @@ func Test_QueryBuilder_DeleteReturning_RowIterationError(
 	mRows := &mockRows{
 		cols: []string{"id", "email"},
 		records: [][]any{
-			{int64(1), "alice@google.com"},
+			{int64(1), "alice@example.com"},
 		},
 		rowsErr: errors.New("delete iter failed"),
 	}

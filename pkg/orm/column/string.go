@@ -1,6 +1,8 @@
 package column
 
 import (
+	"strings"
+
 	"github.com/uthereal/scheme-runtime-go/pkg/contract"
 	"github.com/uthereal/scheme-runtime-go/pkg/orm/where"
 )
@@ -11,13 +13,21 @@ type StringColumn[Model any, Type ~string] struct {
 	Column[Model, Type]
 }
 
+// likeEscapeReplacer escapes SQL LIKE/ILIKE metacharacters (\, %, _) in a
+// single pass using PostgreSQL's default backslash escape character.
+var likeEscapeReplacer = strings.NewReplacer(
+	`\`, `\\`,
+	`%`, `\%`,
+	`_`, `\_`,
+)
+
 // Contains returns a condition checking if this column contains the
 // specified substring (e.g., LIKE %val%).
 func (c StringColumn[Model, Type]) Contains(val string) contract.Where {
 	return where.BasicWhere{
 		Column:   c.Name,
 		Operator: contract.OpLike,
-		Value:    "%" + val + "%",
+		Value:    "%" + likeEscapeReplacer.Replace(val) + "%",
 		Boolean:  contract.BoolAnd,
 	}
 }
@@ -28,7 +38,7 @@ func (c StringColumn[Model, Type]) ContainsFold(val string) contract.Where {
 	return where.BasicWhere{
 		Column:   c.Name,
 		Operator: contract.OpILike,
-		Value:    "%" + val + "%",
+		Value:    "%" + likeEscapeReplacer.Replace(val) + "%",
 		Boolean:  contract.BoolAnd,
 	}
 }
@@ -39,7 +49,7 @@ func (c StringColumn[Model, Type]) HasPrefix(val string) contract.Where {
 	return where.BasicWhere{
 		Column:   c.Name,
 		Operator: contract.OpLike,
-		Value:    val + "%",
+		Value:    likeEscapeReplacer.Replace(val) + "%",
 		Boolean:  contract.BoolAnd,
 	}
 }
@@ -50,7 +60,7 @@ func (c StringColumn[Model, Type]) HasSuffix(val string) contract.Where {
 	return where.BasicWhere{
 		Column:   c.Name,
 		Operator: contract.OpLike,
-		Value:    "%" + val,
+		Value:    "%" + likeEscapeReplacer.Replace(val),
 		Boolean:  contract.BoolAnd,
 	}
 }

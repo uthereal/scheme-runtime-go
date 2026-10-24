@@ -24,6 +24,7 @@ func CoerceArgToComparable(arg *aip160.Arg) (*aip160.Comparable, error) {
 }
 
 // CoerceArgToStringConstant attempts to extract a string constant from an Arg.
+// The AST node must be a double-quoted string literal.
 func CoerceArgToStringConstant(arg *aip160.Arg) (string, error) {
 	cmp, err := CoerceArgToComparable(arg)
 	if err != nil {
@@ -34,6 +35,18 @@ func CoerceArgToStringConstant(arg *aip160.Arg) (string, error) {
 	}
 	if cmp.Member.Value == nil {
 		return "", errors.New("invalid string comparable -> value missing")
+	}
+	if !cmp.Member.Value.Quoted {
+		return "", fmt.Errorf(
+			"expected double-quoted string literal but found unquoted value %q",
+			cmp.Member.Input(),
+		)
+	}
+	if len(cmp.Member.Fields) > 0 {
+		return "", fmt.Errorf(
+			"field navigation not supported in string literal %q",
+			cmp.Member.Input(),
+		)
 	}
 	return cmp.Member.Value.Value, nil
 }

@@ -59,7 +59,7 @@ func (f *uuidField[T, R]) BuildCondition(
 		)
 	}
 	switch op {
-	case contract.OpEq, contract.OpDefault:
+	case contract.OpEq:
 		return f.subject.Eq(T(parsed)), nil
 	case contract.OpNotEq:
 		return f.subject.Neq(T(parsed)), nil

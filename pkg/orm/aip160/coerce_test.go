@@ -140,6 +140,38 @@ func Test_Coerce_Errors(t *testing.T) {
 	_, err = CoerceArgToStringConstant(argWithNilValue)
 	assert.Error(t, err)
 
+	unquotedStringArg := &aip160.Arg{
+		Comparable: &aip160.Comparable{
+			Member: &aip160.Member{
+				Value: &aip160.Value{
+					Value:  "unquoted",
+					Quoted: false,
+				},
+			},
+		},
+	}
+	_, err = CoerceArgToStringConstant(unquotedStringArg)
+	assert.Error(t, err)
+
+	stringWithFieldsArg := &aip160.Arg{
+		Comparable: &aip160.Comparable{
+			Member: &aip160.Member{
+				Value: &aip160.Value{
+					Value:  "foo",
+					Quoted: true,
+				},
+				Fields: []*aip160.Value{
+					{
+						Value:  "bar",
+						Quoted: false,
+					},
+				},
+			},
+		},
+	}
+	_, err = CoerceArgToStringConstant(stringWithFieldsArg)
+	assert.Error(t, err)
+
 	// 3. CoerceArgToFloatConstant errors
 	_, err = CoerceArgToFloatConstant(missingCmpArg)
 	assert.Error(t, err)

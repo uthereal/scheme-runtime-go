@@ -43,7 +43,7 @@ func (f *durationField[T, R]) BuildCondition(
 		return zero, err
 	}
 	switch op {
-	case contract.OpEq, contract.OpDefault:
+	case contract.OpEq:
 		return f.subject.Eq(T(val)), nil
 	case contract.OpNotEq:
 		return f.subject.Neq(T(val)), nil

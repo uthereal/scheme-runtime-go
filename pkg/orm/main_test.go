@@ -79,11 +79,15 @@ type testMutator struct {
 // testSchema defines columns for the test model.
 var testSchema = struct {
 	ID    column.NumericColumn[testModel, int64]
+	Name  column.StringColumn[testModel, string]
 	Email column.StringColumn[testModel, string]
 	Age   column.NullableNumericColumn[testModel, int]
 }{
 	ID: column.NumericColumn[testModel, int64]{
 		Name: "id",
+	},
+	Name: column.StringColumn[testModel, string]{
+		Name: "name",
 	},
 	Email: column.StringColumn[testModel, string]{
 		Name: "email",

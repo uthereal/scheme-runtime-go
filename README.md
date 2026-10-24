@@ -47,7 +47,11 @@ users, err := qb.
     Get(ctx)
 
 // AIP-160 filter strings
-qb, err := qb.WhereAip160(`status = "active" AND age >= 18`, fieldMap)
+qb, err := qb.WhereAip160(
+    `status = "active" AND age >= 18`,
+    globalFields,
+    mapColumnToAip160Field,
+)
 
 // Bulk insert with RETURNING
 users, err := qb.InsertManyReturning(ctx, mutators)

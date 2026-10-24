@@ -27,6 +27,10 @@ type Aip160StringSubject[T ~string, R any] interface {
 
 	// Neq checks if the column is not equal to the given value.
 	Neq(val T) R
+
+	// ContainsFold checks case-insensitively if the column contains the
+	// given substring.
+	ContainsFold(val string) R
 }
 
 // Aip160NumericSubject defines the database column methods required for
@@ -204,6 +208,3 @@ const OpLtEq Aip160Operator = "<="
 
 // OpHas represents the has/colon operator.
 const OpHas Aip160Operator = ":"
-
-// OpDefault represents the default comparison operator.
-const OpDefault Aip160Operator = ""

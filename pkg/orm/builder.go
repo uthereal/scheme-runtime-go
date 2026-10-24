@@ -310,9 +310,64 @@ func (qb *QueryBuilder[Model, Mutator]) Where(
 	return qb
 }
 
+// nestWheres groups where conditions into a nested where clause joined by
+// the specified boolean.
+func (qb *QueryBuilder[Model, Mutator]) nestWheres(
+	parts []contract.Where,
+	boolean contract.BooleanOperator,
+	not bool,
+) contract.Where {
+	for i := 1; i < len(parts); i++ {
+		parts[i] = parts[i].WithBoolean(boolean)
+	}
+	subQB := NewQueryBuilder[Model, Mutator](
+		nil,
+		nil,
+		contract.TableMetadata[Model]{},
+		nil,
+		nil,
+	)
+	subQB.wheres = parts
+	return where.NestedWhere{
+		Query:   subQB,
+		Not:     not,
+		Boolean: contract.BoolAnd,
+	}
+}
+
+// buildGlobalCondition builds an OR-joined condition across all global fields.
+func (qb *QueryBuilder[Model, Mutator]) buildGlobalCondition(
+	cmp *aip160.Comparable,
+	globalFields []contract.Aip160Field[contract.Where],
+) (contract.Where, error) {
+	if len(globalFields) == 0 {
+		return nil, errors.New("global filter expressions are not supported")
+	}
+
+	arg := &aip160.Arg{Comparable: cmp}
+	conds := make([]contract.Where, len(globalFields))
+	for i, field := range globalFields {
+		cond, err := field.BuildCondition(contract.OpHas, arg)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to build global condition for %q -> %w",
+				cmp.Member.Input(),
+				err,
+			)
+		}
+		conds[i] = cond
+	}
+
+	if len(conds) == 1 {
+		return conds[0], nil
+	}
+	return qb.nestWheres(conds, contract.BoolOr, false), nil
+}
+
 // WhereAip160 parses and appends an AIP-160 filter string to the query.
 func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 	filter string,
+	globalFields []contract.Aip160Field[contract.Where],
 	mapColumnNameToAip160Field map[string]contract.Aip160Field[contract.Where],
 ) (*QueryBuilder[Model, Mutator], error) {
 	if strings.TrimSpace(filter) == "" {
@@ -333,6 +388,18 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 	err = ormaip160.IterativeWalk(f, func(node any) error {
 		switch n := node.(type) {
 		case *aip160.Restriction:
+			if n.Comparator == "" {
+				cond, globalErr := qb.buildGlobalCondition(
+					n.Comparable,
+					globalFields,
+				)
+				if globalErr != nil {
+					return globalErr
+				}
+				stack = append(stack, cond)
+				return nil
+			}
+
 			fieldName := n.Comparable.Member.Input()
 			field, ok := mapColumnNameToAip160Field[fieldName]
 			if !ok {
@@ -349,13 +416,6 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 					fieldName,
 					field.Type(),
 					op,
-				)
-			}
-
-			if n.Arg == nil {
-				return fmt.Errorf(
-					"missing argument for filter field %q",
-					fieldName,
 				)
 			}
 
@@ -377,21 +437,13 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 				if popErr != nil {
 					return popErr
 				}
-				subQB := NewQueryBuilder[Model, Mutator](
-					nil,
-					nil,
-					contract.TableMetadata[Model]{},
-					nil,
-					nil,
-				)
-				subQB.wheres = []contract.Where{item}
 				stack = append(
 					stack,
-					where.NestedWhere{
-						Query:   subQB,
-						Not:     true,
-						Boolean: contract.BoolAnd,
-					},
+					qb.nestWheres(
+						[]contract.Where{item},
+						contract.BoolAnd,
+						true,
+					),
 				)
 			}
 
@@ -403,23 +455,11 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 				func(
 					parts ...contract.Where,
 				) (contract.Where, error) {
-					for i := 1; i < len(parts); i++ {
-						parts[i] = parts[i].WithBoolean(
-							contract.BoolOr,
-						)
-					}
-					subQB := NewQueryBuilder[Model, Mutator](
-						nil,
-						nil,
-						contract.TableMetadata[Model]{},
-						nil,
-						nil,
-					)
-					subQB.wheres = parts
-					return where.NestedWhere{
-						Query:   subQB,
-						Boolean: contract.BoolAnd,
-					}, nil
+					return qb.nestWheres(
+						parts,
+						contract.BoolOr,
+						false,
+					), nil
 				},
 			)
 			if combineErr != nil {
@@ -434,23 +474,11 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 				func(
 					parts ...contract.Where,
 				) (contract.Where, error) {
-					for i := 1; i < len(parts); i++ {
-						parts[i] = parts[i].WithBoolean(
-							contract.BoolAnd,
-						)
-					}
-					subQB := NewQueryBuilder[Model, Mutator](
-						nil,
-						nil,
-						contract.TableMetadata[Model]{},
-						nil,
-						nil,
-					)
-					subQB.wheres = parts
-					return where.NestedWhere{
-						Query:   subQB,
-						Boolean: contract.BoolAnd,
-					}, nil
+					return qb.nestWheres(
+						parts,
+						contract.BoolAnd,
+						false,
+					), nil
 				},
 			)
 			if combineErr != nil {
@@ -465,23 +493,11 @@ func (qb *QueryBuilder[Model, Mutator]) WhereAip160(
 				func(
 					parts ...contract.Where,
 				) (contract.Where, error) {
-					for i := 1; i < len(parts); i++ {
-						parts[i] = parts[i].WithBoolean(
-							contract.BoolAnd,
-						)
-					}
-					subQB := NewQueryBuilder[Model, Mutator](
-						nil,
-						nil,
-						contract.TableMetadata[Model]{},
-						nil,
-						nil,
-					)
-					subQB.wheres = parts
-					return where.NestedWhere{
-						Query:   subQB,
-						Boolean: contract.BoolAnd,
-					}, nil
+					return qb.nestWheres(
+						parts,
+						contract.BoolAnd,
+						false,
+					), nil
 				},
 			)
 			if combineErr != nil {
@@ -682,7 +698,8 @@ func (qb *QueryBuilder[Model, Mutator]) Exists(
 }
 
 // Insert inserts a single mutator record into the database.
-// It returns true if the row was inserted, or false if it was skipped (e.g. ON CONFLICT DO NOTHING).
+// It returns true if the row was inserted, or false if it was skipped
+// (e.g. ON CONFLICT DO NOTHING).
 func (qb *QueryBuilder[Model, Mutator]) Insert(
 	ctx context.Context,
 	mutator Mutator,
